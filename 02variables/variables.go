@@ -7,7 +7,6 @@ import "fmt"
 const LoginToken string = "ae3$ls@45s1" // Public, package scoped
 
 func main() {
-
 	// Using public constant
 	fmt.Println(LoginToken)
 	fmt.Printf("Variable is of type: %T \n", LoginToken)
