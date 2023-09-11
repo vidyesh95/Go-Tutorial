@@ -1,4 +1,11 @@
 # Go-Tutorial
+
+## Resources:
+
+### [Go by Example](https://gobyexample.com/)
+
+Go by Example is a hands-on introduction to Go using annotated example programs.
+
 ### To run a Go program on the terminal, you need to:
 
 1.Create a Go file with a .go extension.
