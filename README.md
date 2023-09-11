@@ -18,14 +18,14 @@ Go by Example is a hands-on introduction to Go using annotated example programs.
 
 5.Run the following command:
 
-```
+```go
 go run filename.go
 ```
 
 where `filename.go` is the name of the Go file.
 
 For example, if you have a Go file called hello.go with the following code:
-```
+```go
 package main
 
 import "fmt"
@@ -36,7 +36,7 @@ func main() {
 ```
 You can run the program by typing the following command in the terminal:
 
-```
+```go
 go run hello.go
 ```
 
