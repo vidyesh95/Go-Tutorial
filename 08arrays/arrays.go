@@ -4,12 +4,27 @@ import "fmt"
 
 // Arrays in Go
 func main() {
+
+	// Print the array of Even numbers
+	fmt.Println("Print the array of Even numbers")
+	var EvenNum [5]int
+	EvenNum[0] = 0
+	EvenNum[1] = 2
+	EvenNum[2] = 4
+	EvenNum[3] = 6
+	EvenNum[4] = 8
+	fmt.Println(EvenNum)
+
+	// Print the array of Odd numbers
+	OddNum := [5]int{1, 3, 5, 7, 9}
+	fmt.Println("Print the array of Odd numbers", OddNum)
+
 	var ages [3]int = [3]int{20, 25, 30}
 	var names [4]string = [4]string{"Yash", "Raj", "Rohit", "Sachin"}
 
 	// Print the arrays
 	fmt.Println("Print the arrays")
-	fmt.Println(ages, len(ages))
+	fmt.Println("Print the array of ages:", ages, "of length", len(ages))
 	fmt.Println(names, len(names))
 
 	// Print the first element
