@@ -27,6 +27,7 @@ func main() {
 
 	// Short variable declaration
 	// This can be used only inside a function
+	// The type is automatically inferred
 	k := 10
 	fmt.Printf("Type: %T Value: %v\n", k, k)
 
