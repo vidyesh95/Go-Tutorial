@@ -101,7 +101,7 @@ func main() {
 	fmt.Println(website)
 	fmt.Printf("Variable is of type: %T \n", website)
 
-	// No var style
+	// Type inference
 	numberOfUsers := 300000
 	fmt.Println(numberOfUsers)
 	fmt.Printf("Variable is of type: %T \n", numberOfUsers)
