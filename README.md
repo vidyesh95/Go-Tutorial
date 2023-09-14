@@ -18,7 +18,7 @@ Go by Example is a hands-on introduction to Go using annotated example programs.
 
 5.Run the following command:
 
-```go
+```shell
 go run filename.go
 ```
 
@@ -36,7 +36,7 @@ func main() {
 ```
 You can run the program by typing the following command in the terminal:
 
-```go
+```shell
 go run hello.go
 ```
 
