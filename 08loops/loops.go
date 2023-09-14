@@ -2,6 +2,18 @@ package main
 
 import "fmt"
 
+/*
+* For is Go’s only looping construct. Here are three basic types of for loops.
+* The most basic type, with a single condition.
+* A classic initial/condition/after for loop.
+* for without a condition will loop repeatedly until you break out of the loop or return from the enclosing function.
+* You can also continue to the next iteration of the loop.
+* Loops can also be nested. Note the use of a labeled statement to break out of the nested loops.
+* The range form of the for loop iterates over a slice or map.
+* When ranging over a slice, two values are returned for each iteration. The first is the index, and the second is a copy of the element at that index.
+* You can skip the index or value by assigning to _.
+* If you only want the index, you can omit the second variable.
+ */
 func main() {
 	// for loop
 	fmt.Println("For loop")
