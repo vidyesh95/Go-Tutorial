@@ -1,4 +1,4 @@
-# Go-Tutorial
+# Go-Tutorial <img src="https://github.com/vidyesh95/Go-Tutorial/assets/13806493/ab0f1d12-9f5b-4c1e-ab05-f6cde0d372db" alt="drawing" width="24"/>
 
 ## Resources:
 
