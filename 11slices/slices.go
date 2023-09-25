@@ -10,10 +10,25 @@ import "fmt"
 
 func main() {
 	fmt.Println("Slices in Go")
+
 	var slice []string
 	fmt.Println(slice)
 	fmt.Printf("Variable is of type: %T \n", slice)
 	fmt.Println("uninit:", slice, "isSlice nil:", slice == nil, "isLen of slice 0:", len(slice) == 0, "cap:", cap(slice))
+
 	slice = make([]string, 3)
 	fmt.Println("emp:", slice, "len:", len(slice), "cap:", cap(slice))
+
+	slice[0] = "a"
+	slice[1] = "b"
+	slice[2] = "c"
+	fmt.Println("set:", slice)
+	fmt.Println("get:", slice[2])
+
+	fmt.Println("len:", len(slice), "cap:", cap(slice))
+
+	slice = append(slice, "d")
+	slice = append(slice, "e", "f")
+	fmt.Println("appended slice:", slice)
+
 }
