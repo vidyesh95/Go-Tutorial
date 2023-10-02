@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Slices are a key data type in Go, giving a more powerful interface to sequences than arrays.
 // Unlike arrays, slices are typed only by the elements they contain (not the number of elements).
@@ -34,4 +37,41 @@ func main() {
 	c := make([]string, len(slice))
 	copy(c, slice)
 	fmt.Println("copy:", c)
+
+	l := slice[2:5]
+	fmt.Println("slice[2:5]:", l)
+
+	l = slice[:5]
+	fmt.Println("slice[:5]:", l)
+
+	l = slice[2:]
+	fmt.Println("slice[2:]:", l)
+
+	t1 := []string{"g", "h", "i"}
+	fmt.Println("dcl1:", t1)
+
+	t2 := []string{"g", "h", "i"}
+	fmt.Println("dcl2:", t2)
+	if slices.Equal(t1, t2) {
+		fmt.Println("t1 and t2 are equal(t1 == t2)")
+	} else {
+		fmt.Println("t1 and t2 are not equal(t1 != t2)")
+	}
+
+	twoD := make([][]int, 3)
+	fmt.Println("twoD:", twoD)
+	fmt.Println("len(twoD):", len(twoD))
+	fmt.Println("cap(twoD):", cap(twoD))
+	for i := 0; i < len(twoD); i++ {
+		innerLen := i + 1
+		twoD[i] = make([]int, innerLen)
+		fmt.Println("twoD[i]:", twoD[i])
+		fmt.Println("len(twoD[i]):", len(twoD[i]))
+		fmt.Println("cap(twoD[i]):", cap(twoD[i]))
+		for j := 0; j < innerLen; j++ {
+			twoD[i][j] = i + j
+			fmt.Println("twoD[i][j]:", twoD[i][j])
+		}
+	}
+	fmt.Println("2d:", twoD)
 }
