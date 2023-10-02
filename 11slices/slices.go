@@ -31,4 +31,7 @@ func main() {
 	slice = append(slice, "e", "f")
 	fmt.Println("appended slice:", slice)
 
+	c := make([]string, len(slice))
+	copy(c, slice)
+	fmt.Println("copy:", c)
 }
