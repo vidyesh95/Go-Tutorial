@@ -34,4 +34,12 @@ func main() {
 		sum += num
 	}
 	fmt.Println("sum:", sum)
+
+	for i, num := range nums {
+		fmt.Println("i:", i)
+		fmt.Println("num:", num)
+		if num == 3 {
+			fmt.Println("index:", i)
+		}
+	}
 }
