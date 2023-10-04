@@ -42,4 +42,18 @@ func main() {
 			fmt.Println("index:", i)
 		}
 	}
+
+	kvs := map[string]string{"a": "apple", "b": "banana"}
+	for k, v := range kvs {
+		fmt.Println("k:", k)
+		fmt.Println("v:", v)
+	}
+
+	for k := range kvs {
+		fmt.Println("key:", k)
+	}
+
+	for i, c := range "go" {
+		fmt.Println("i:", i, "c:", c)
+	}
 }
