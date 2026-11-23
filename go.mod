@@ -1,3 +1,3 @@
 module github.com/vidyesh95/Go-Tutorial
 
-go 1.21.1
+go 1.27
