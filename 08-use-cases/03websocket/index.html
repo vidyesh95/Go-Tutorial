@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Go WebSocket chat</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; max-width: 40rem; margin: 1rem auto; padding: 0 1rem; }
+    #log { border: 1px solid #8884; border-radius: 6px; height: 22rem; overflow-y: auto; padding: .5rem; }
+    .sys { color: #888; font-style: italic; }
+    .from { font-weight: 600; }
+    form { display: flex; gap: .5rem; margin-top: .5rem; }
+    #text { flex: 1; padding: .4rem; }
+    #status { font-size: 12px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Go WebSocket chat</h1>
+  <div id="log" aria-live="polite"></div>
+  <form id="form">
+    <input id="text" autocomplete="off" placeholder="say something" autofocus>
+    <button>Send</button>
+  </form>
+  <p id="status">connecting...</p>
+  <script>
+    // Plain browser WebSocket API: no framework needed. wss:// when the page itself is https://.
+    const nick = prompt("Nickname?", "guest" + Math.floor(Math.random() * 100)) || "guest";
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/ws?nick=${encodeURIComponent(nick)}`);
+    const log = document.getElementById("log");
+    const status = document.getElementById("status");
+
+    ws.onopen = () => status.textContent = "connected as " + nick;
+    ws.onclose = (e) => status.textContent = `disconnected (code ${e.code} ${e.reason})`;
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      const line = document.createElement("div");
+      if (m.type === "sys") {
+        line.className = "sys";
+        line.textContent = m.text;
+      } else {
+        const who = document.createElement("span");
+        who.className = "from";
+        who.textContent = m.from + ": ";
+        line.append(who, document.createTextNode(m.text)); // textContent/TextNode: never innerHTML (XSS)
+      }
+      log.append(line);
+      log.scrollTop = log.scrollHeight;
+    };
+    document.getElementById("form").onsubmit = (e) => {
+      e.preventDefault();
+      const input = document.getElementById("text");
+      if (input.value.trim() && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ text: input.value }));
+        input.value = "";
+      }
+    };
+  </script>
+</body>
+</html>
