@@ -24,3 +24,12 @@
 
 # Go workspace file
 go.work
+
+# Local build output & data
+bin/
+tmp/
+*.db
+*.db-shm
+*.db-wal
+.env
+coverage.html

@@ -1,0 +1,32 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose     # forgot resp.Body.Close()
+    - errorlint     # use errors.Is/As instead of ==
+    - gosec         # security smells (SQL string concat, weak crypto...)
+    - misspell
+    - noctx         # HTTP requests without context
+    - rowserrcheck  # forgot rows.Err()
+    - sqlclosecheck # forgot rows.Close()
+    - unconvert
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true # lessons are package main; doc comments optional
+  exclusions:
+    rules:
+      # Lessons intentionally show "bad" code (e.g. SQL injection demo).
+      - path: 03-sql-sqlite/03prepared
+        linters: [gosec]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

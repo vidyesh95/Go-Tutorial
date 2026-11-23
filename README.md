@@ -1,49 +1,60 @@
 # Go-Tutorial <img src="https://github.com/vidyesh95/Go-Tutorial/assets/13806493/ab0f1d12-9f5b-4c1e-ab05-f6cde0d372db" alt="drawing" width="24"/>
 
-## Resources:
+A hands-on path from **zero Go** to **job-ready Go backend engineer**: language, concurrency, SQL,
+REST APIs, frameworks, microservices and the other things Go is used for in industry.
 
-### [Go by Example](https://gobyexample.com/)
+Built for **Go 1.27.1+**. Every lesson is a runnable program with notes in its comments.
 
-Go by Example is a hands-on introduction to Go using annotated example programs.
-
-## To run a Go program on the terminal, you need to:
-
-1.Create a Go file with a .go extension.
-
-2.Write your Go code in the file.
-
-3.Save the file.
-
-4.Open a terminal window and navigate to the directory where the Go file is located.
-
-5.Run the following command:
+## Quick start
 
 ```shell
-go run filename.go
+go version                               # needs go1.27.1 or newer
+go run ./01-fundamentals/01hello         # run one lesson
+make help                                # list all helper tasks
+make test                                # run every test in the repo
 ```
 
-where `filename.go` is the name of the Go file.
+`go run ./path/to/lesson` compiles and runs the `main` package in that folder.
+`go build -o bin/app ./path` produces a binary instead (`bin/` is git-ignored).
 
-For example, if you have a Go file called hello.go with the following code:
-```go
-package main
+## Roadmap
 
-import "fmt"
+Do the tracks in order. Each folder has a `README.md` with the lesson list and interview questions.
 
-func main() {
-  fmt.Println("Hello, world!")
-}
-```
-You can run the program by typing the following command in the terminal:
+| # | Track | What you learn | Why it matters for jobs |
+|---|-------|----------------|-------------------------|
+| 01 | [Fundamentals](01-fundamentals/) | syntax, types, slices, maps, structs, interfaces, errors, generics, iterators, JSON, testing, modules | Every interview starts here |
+| 02 | [Concurrency](02-concurrency/) | goroutines, channels, select, sync, context, worker pools, errgroup, race detector | Go's killer feature; always asked |
+| 03 | [SQL with SQLite](03-sql-sqlite/) | SQL itself, `database/sql`, transactions, joins, indexes, pagination, **sqlx**, **sqlc**, migrations | Go shops use raw SQL, not ORMs |
+| 04 | [Web with stdlib](04-web-stdlib/) | `net/http`, routing, JSON, middleware, `slog`, HTTP client, graceful shutdown, `httptest` | Std lib is enough for production |
+| 05 | [Capstone: taskapi](05-projects/taskapi/) | production REST API: layered layout, auth (bcrypt+JWT), sqlc, migrations, tests, Docker | Portfolio project for interviews |
+| 06 | [Frameworks](06-frameworks/) | same API in **chi**, **Gin**, **Fiber** + comparison | Read any codebase you join |
+| 07 | [Microservices](07-microservices/) | gRPC + protobuf, API gateway, tracing, docker-compose, retries, idempotency | How bigger companies split systems |
+| 08 | [Other use cases](08-use-cases/) | CLI tools, TCP server, WebSockets, crawler, job worker | Go is also DevOps / infra / tooling |
 
-```shell
-go run hello.go
-```
+Extra reading in [`docs/`](docs/):
+- [industry-stack.md](docs/industry-stack.md) — what startups and big companies actually use, and why
+- [postgres-later.md](docs/postgres-later.md) — moving from SQLite to PostgreSQL
+- [interview-prep.md](docs/interview-prep.md) — Go, backend and SQL interview questions
 
-This will compile and run the Go program, and the output will be "Hello, world!".
+## Why SQLite?
 
-Here are some additional things to keep in mind when running Go programs on the terminal:
+Zero setup: the database is a file and the driver (`modernc.org/sqlite`) is pure Go, so no Docker
+or C compiler is needed. The SQL is written to be portable; `docs/postgres-later.md` shows the
+handful of changes needed to switch to PostgreSQL, which is what most Go jobs use in production.
 
-- If the Go file is located in a different directory, you can use the ```cd``` command to navigate to that directory before running the program.
-- If the Go file has any dependencies, the Go compiler will automatically download and install them.
-- You can also use the ```go build``` command to compile the Go program into an executable file. This file can then be run without using the ```go run``` command.
+## Tooling used
+
+| Tool | How you get it |
+|------|----------------|
+| Go 1.27.1+ | https://go.dev/dl |
+| `sqlc`, `goose`, `buf` | pinned in `go.mod` as tools → `go tool sqlc ...` (no global install) |
+| `golangci-lint` | optional locally (https://golangci-lint.run), always runs in CI |
+| Docker | only for tracks 05 (image build) and 07 (docker-compose) |
+
+## Resources
+
+- [Go by Example](https://gobyexample.com/) — the style the fundamentals follow
+- [Effective Go](https://go.dev/doc/effective_go) and [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments)
+- [Go release notes](https://go.dev/doc/devel/release) — what changed in each version
+- [SQLBolt](https://sqlbolt.com/) — interactive SQL practice
