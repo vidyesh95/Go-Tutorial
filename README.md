@@ -27,7 +27,7 @@ Do the tracks in order. Each folder has a `README.md` with the lesson list and i
 | 02 | [Concurrency](02-concurrency/) | goroutines, channels, select, sync, context, worker pools, errgroup, race detector | Go's killer feature; always asked |
 | 03 | [SQL with SQLite](03-sql-sqlite/) | SQL itself, `database/sql`, transactions, joins, indexes, pagination, **sqlx**, **sqlc**, migrations | Go shops use raw SQL, not ORMs |
 | 04 | [Web with stdlib](04-web-stdlib/) | `net/http`, routing, JSON, middleware, `slog`, HTTP client, graceful shutdown, `httptest` | Std lib is enough for production |
-| 05 | [Capstone: taskapi](05-projects/taskapi/) | production REST API: layered layout, auth (bcrypt+JWT), sqlc, migrations, tests, Docker | Portfolio project for interviews |
+| 05 | [Capstone: taskapi](05-projects/taskapi/) | production REST API: layered layout, auth (Argon2id, JWT + Better Auth-style cookie sessions, GitHub OAuth), sqlc, migrations, tests, Docker | Portfolio project for interviews |
 | 06 | [Frameworks](06-frameworks/) | same API in **chi**, **Gin**, **Fiber** + comparison | Read any codebase you join |
 | 07 | [Microservices](07-microservices/) | gRPC + protobuf, API gateway, tracing, docker-compose, retries, idempotency | How bigger companies split systems |
 | 08 | [Other use cases](08-use-cases/) | CLI tools, TCP server, WebSockets, crawler, job worker | Go is also DevOps / infra / tooling |

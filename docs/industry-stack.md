@@ -8,13 +8,13 @@ look surprisingly similar. This page summarizes the common choices so you know w
 | Layer | Most common choice | Also seen | Notes |
 |-------|--------------------|-----------|-------|
 | HTTP routing | `net/http` (Go 1.22+ `ServeMux` patterns), **chi** | Gin, Echo, Fiber | chi = stdlib-compatible handlers, so it's the "safe" pick |
-| JSON | `encoding/json` | `encoding/json/v2` (experiment), sonic | Stdlib is fine for nearly everyone |
+| JSON | `encoding/json` | `encoding/json/v2` (importable since Go 1.27), sonic | Stdlib is fine for nearly everyone |
 | DB driver | **pgx** (PostgreSQL) | `database/sql` + driver | pgx is the de-facto Postgres driver |
 | Query layer | **sqlc** (generate code from SQL), **sqlx**, raw `database/sql` | GORM, ent, bun | Most job postings mention sqlc/sqlx or "raw SQL" |
 | Migrations | **goose**, golang-migrate, atlas | — | Plain `.sql` files, versioned in git |
 | Logging | `log/slog` (stdlib since 1.21) | zap, zerolog | New code uses slog |
 | Config | env vars + small struct | viper, envconfig | 12-factor style |
-| Auth | JWT (`golang-jwt/jwt/v5`), sessions, OAuth2 (`x/oauth2`) | — | bcrypt/argon2 for passwords |
+| Auth | JWT (`golang-jwt/jwt/v5`), sessions, OAuth2 (`x/oauth2`) | — | Argon2id (OWASP first choice) or bcrypt for passwords; DB sessions for web, JWT for APIs |
 | Validation | hand-written or `go-playground/validator` | — | Gin bundles validator |
 | RPC between services | **gRPC + protobuf** (buf) | Connect, Twirp, plain HTTP/JSON | gRPC is standard at bigger companies |
 | Messaging | Kafka, NATS, RabbitMQ, SQS | Redis streams | async work and events |
