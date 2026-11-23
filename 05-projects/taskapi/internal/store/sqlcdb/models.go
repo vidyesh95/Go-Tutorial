@@ -4,10 +4,37 @@
 
 package sqlcdb
 
+type Account struct {
+	ID                    string
+	UserID                string
+	ProviderID            string
+	AccountID             string
+	Password              *string
+	AccessToken           *string
+	RefreshToken          *string
+	IDToken               *string
+	AccessTokenExpiresAt  *string
+	RefreshTokenExpiresAt *string
+	Scope                 *string
+	CreatedAt             string
+	UpdatedAt             string
+}
+
 type Project struct {
 	ID        string
 	OwnerID   string
 	Name      string
+	CreatedAt string
+	UpdatedAt string
+}
+
+type Session struct {
+	ID        string
+	UserID    string
+	TokenHash string
+	ExpiresAt string
+	IpAddress *string
+	UserAgent *string
 	CreatedAt string
 	UpdatedAt string
 }
@@ -24,9 +51,20 @@ type Task struct {
 }
 
 type User struct {
-	ID           string
-	Email        string
-	Name         string
-	PasswordHash string
-	CreatedAt    string
+	ID            string
+	Email         string
+	Name          string
+	CreatedAt     string
+	EmailVerified int64
+	Image         *string
+	UpdatedAt     string
+}
+
+type Verification struct {
+	ID         string
+	Identifier string
+	Value      string
+	ExpiresAt  string
+	CreatedAt  string
+	UpdatedAt  string
 }

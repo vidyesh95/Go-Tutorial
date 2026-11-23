@@ -10,16 +10,18 @@ import (
 )
 
 const createUser = `-- name: CreateUser :exec
-INSERT INTO users (id, email, name, password_hash, created_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO users (id, email, name, email_verified, image, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateUserParams struct {
-	ID           string
-	Email        string
-	Name         string
-	PasswordHash string
-	CreatedAt    string
+	ID            string
+	Email         string
+	Name          string
+	EmailVerified int64
+	Image         *string
+	CreatedAt     string
+	UpdatedAt     string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -27,14 +29,16 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.ID,
 		arg.Email,
 		arg.Name,
-		arg.PasswordHash,
+		arg.EmailVerified,
+		arg.Image,
 		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
 	return err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, name, password_hash, created_at FROM users WHERE email = ?
+SELECT id, email, name, created_at, email_verified, image, updated_at FROM users WHERE email = ?
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -44,14 +48,16 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.ID,
 		&i.Email,
 		&i.Name,
-		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.EmailVerified,
+		&i.Image,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, name, password_hash, created_at FROM users WHERE id = ?
+SELECT id, email, name, created_at, email_verified, image, updated_at FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -61,8 +67,27 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.ID,
 		&i.Email,
 		&i.Name,
-		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.EmailVerified,
+		&i.Image,
+		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const markEmailVerified = `-- name: MarkEmailVerified :execrows
+UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?
+`
+
+type MarkEmailVerifiedParams struct {
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) MarkEmailVerified(ctx context.Context, arg MarkEmailVerifiedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markEmailVerified, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

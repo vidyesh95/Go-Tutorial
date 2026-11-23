@@ -60,7 +60,8 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// Store implements the service layer's UserRepo, ProjectRepo and TaskRepo.
+// Store implements the service layer's repository interfaces (users, accounts, sessions,
+// verifications, projects, tasks).
 type Store struct {
 	db *sql.DB // nil inside a transaction (see WithTx)
 	q  *sqlcdb.Queries
@@ -101,11 +102,24 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *Store) error) (err error
 }
 
 // --- Users --------------------------------------------------------------------------------
+// (accounts, sessions and verifications live in store_auth.go)
 
-func (s *Store) CreateUser(ctx context.Context, u domain.User) error {
+// CreateUserWithAccount inserts a user and its first account in ONE transaction. A user without
+// any account could never sign in, and an account without a user violates the foreign key, so
+// the two must appear together or not at all. A duplicate email is domain.ErrConflict.
+func (s *Store) CreateUserWithAccount(ctx context.Context, u domain.User, a domain.Account) error {
+	return s.WithTx(ctx, func(tx *Store) error {
+		if err := tx.createUser(ctx, u); err != nil {
+			return err
+		}
+		return tx.CreateAccount(ctx, a)
+	})
+}
+
+func (s *Store) createUser(ctx context.Context, u domain.User) error {
 	err := s.q.CreateUser(ctx, sqlcdb.CreateUserParams{
-		ID: u.ID, Email: u.Email, Name: u.Name, PasswordHash: u.PasswordHash,
-		CreatedAt: formatTime(u.CreatedAt),
+		ID: u.ID, Email: u.Email, Name: u.Name, EmailVerified: boolToInt(u.EmailVerified), Image: u.Image,
+		CreatedAt: formatTime(u.CreatedAt), UpdatedAt: formatTime(u.UpdatedAt),
 	})
 	return wrap("create user", err)
 }
@@ -124,6 +138,15 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (domain.User, error)
 		return domain.User{}, wrap("get user", err)
 	}
 	return toUser(row)
+}
+
+// MarkEmailVerified sets email_verified; domain.ErrNotFound if the user does not exist.
+func (s *Store) MarkEmailVerified(ctx context.Context, id string, at time.Time) error {
+	n, err := s.q.MarkEmailVerified(ctx, sqlcdb.MarkEmailVerifiedParams{UpdatedAt: formatTime(at), ID: id})
+	if err != nil {
+		return wrap("mark email verified", err)
+	}
+	return wrapAffected("mark email verified", n)
 }
 
 // --- Projects -----------------------------------------------------------------------------
@@ -320,7 +343,14 @@ func toUser(r sqlcdb.User) (domain.User, error) {
 	if err != nil {
 		return domain.User{}, err
 	}
-	return domain.User{ID: r.ID, Email: r.Email, Name: r.Name, PasswordHash: r.PasswordHash, CreatedAt: created}, nil
+	updated, err := parseTime(r.UpdatedAt)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return domain.User{
+		ID: r.ID, Email: r.Email, Name: r.Name, EmailVerified: r.EmailVerified != 0, Image: r.Image,
+		CreatedAt: created, UpdatedAt: updated,
+	}, nil
 }
 
 func toProject(r sqlcdb.Project) (domain.Project, error) {

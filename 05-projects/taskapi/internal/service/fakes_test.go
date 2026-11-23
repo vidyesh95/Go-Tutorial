@@ -20,6 +20,11 @@ type fakeStore struct {
 	users    map[string]domain.User // by id
 	projects map[string]domain.Project
 	tasks    map[string]domain.Task
+
+	// auth tables (see fakes_auth_test.go)
+	accounts map[string]domain.Account // by id
+	sessions map[string]domain.Session // by id
+	verifs   map[string]domain.Verification
 }
 
 func newFakeStore() *fakeStore {
@@ -27,10 +32,13 @@ func newFakeStore() *fakeStore {
 		users:    map[string]domain.User{},
 		projects: map[string]domain.Project{},
 		tasks:    map[string]domain.Task{},
+		accounts: map[string]domain.Account{},
+		sessions: map[string]domain.Session{},
+		verifs:   map[string]domain.Verification{},
 	}
 }
 
-func (f *fakeStore) CreateUser(_ context.Context, u domain.User) error {
+func (f *fakeStore) CreateUserWithAccount(_ context.Context, u domain.User, a domain.Account) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, existing := range f.users {
@@ -39,6 +47,7 @@ func (f *fakeStore) CreateUser(_ context.Context, u domain.User) error {
 		}
 	}
 	f.users[u.ID] = u
+	f.accounts[a.ID] = a
 	return nil
 }
 
@@ -190,22 +199,30 @@ func (f *fakeStore) DeleteTask(_ context.Context, ownerID, id string) error {
 }
 
 // fakeHasher is a deliberately trivial, instant "hash" (and records calls) so service tests do
-// not pay for bcrypt. The real hasher is covered by the auth package's tests.
+// not pay for Argon2id. The real hasher is covered by the auth package's tests. Hashes starting
+// with "old:" simulate an outdated parameter set (needsRehash), "legacy:" a bcrypt-era hash.
 type fakeHasher struct {
 	mu       sync.Mutex
-	compares int
+	verifies int
 }
 
 func (h *fakeHasher) Hash(p string) (string, error) { return "hashed:" + p, nil }
 
-func (h *fakeHasher) Compare(hash, p string) error {
+func (h *fakeHasher) Verify(p, hash string) (ok, needsRehash bool, err error) {
 	h.mu.Lock()
-	h.compares++
+	h.verifies++
 	h.mu.Unlock()
-	if hash != "hashed:"+p {
-		return auth.ErrPasswordMismatch
+	switch {
+	case strings.HasPrefix(hash, "legacy:"):
+		return false, false, auth.ErrUnsupportedAlgorithm
+	case strings.HasPrefix(hash, "garbage"):
+		return false, false, auth.ErrInvalidHash
+	case hash == "hashed:"+p:
+		return true, false, nil
+	case hash == "old:"+p:
+		return true, true, nil
 	}
-	return nil
+	return false, false, nil
 }
 
 type fakeTokens struct{}

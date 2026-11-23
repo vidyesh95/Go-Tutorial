@@ -11,7 +11,7 @@ import (
 func newAuthSvc(t *testing.T, store *fakeStore) (*AuthService, *fakeHasher) {
 	t.Helper()
 	h := &fakeHasher{}
-	svc, err := NewAuthService(store, h, fakeTokens{})
+	svc, err := NewAuthService(store, store, h, fakeTokens{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +59,16 @@ func TestSignup(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if u.Email != "ada@example.com" || u.Name != "Ada" || u.ID != "id-001" || u.PasswordHash != "hashed:correct horse" {
+				if u.Email != "ada@example.com" || u.Name != "Ada" || u.ID != "id-001" {
 					t.Fatalf("unexpected user %+v", u)
 				}
-				if !u.CreatedAt.Equal(fixedNow) {
-					t.Fatalf("CreatedAt = %v", u.CreatedAt)
+				if !u.CreatedAt.Equal(fixedNow) || !u.UpdatedAt.Equal(fixedNow) || u.EmailVerified {
+					t.Fatalf("timestamps/verified = %v %v %v", u.CreatedAt, u.UpdatedAt, u.EmailVerified)
+				}
+				// The password lives in the credential account, hashed, never in the user.
+				acc, err := store.GetCredentialAccount(t.Context(), u.ID)
+				if err != nil || acc.Password == nil || *acc.Password != "hashed:correct horse" || acc.AccountID != u.ID || acc.ID == u.ID {
+					t.Fatalf("credential account = %+v, %v", acc, err)
 				}
 			}
 		})
@@ -83,7 +88,7 @@ func TestLogin(t *testing.T) {
 		t.Fatalf("login = %+v, %v", res, err)
 	}
 
-	before := hasher.compares
+	before := hasher.verifies
 	for _, tc := range []struct{ name, email, pw string }{
 		{"wrong password", "ada@example.com", "nope"},
 		{"unknown email", "ghost@example.com", "correct horse"},
@@ -94,11 +99,75 @@ func TestLogin(t *testing.T) {
 			t.Errorf("%s: got %v, want ErrUnauthorized", tc.name, err)
 		}
 	}
-	// wrong password and unknown email must both have run a bcrypt-style compare (timing
-	// equalization); the oversized password is rejected before any hashing work.
-	if got := hasher.compares - before; got != 2 {
-		t.Errorf("compare calls = %d, want 2", got)
+	// wrong password and unknown email must both have run a full Argon2id-style verification
+	// (timing equalization); the oversized password is rejected before any hashing work.
+	if got := hasher.verifies - before; got != 2 {
+		t.Errorf("verify calls = %d, want 2", got)
 	}
+}
+
+// Rehash on login, OAuth-only accounts, legacy hashes: the cases around Authenticate.
+func TestAuthenticateEdgeCases(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newFakeStore()
+	svc, hasher := newAuthSvc(t, store)
+	u, err := svc.Signup(ctx, domain.SignupInput{Email: "ada@example.com", Name: "Ada", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc, _ := store.GetCredentialAccount(ctx, u.ID)
+
+	// 1. A hash made with outdated parameters is replaced after a successful login...
+	old := "old:correct horse"
+	store.accounts[acc.ID] = withPassword(acc, &old)
+	if _, err := svc.Authenticate(ctx, "ada@example.com", "correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.GetCredentialAccount(ctx, u.ID); *got.Password != "hashed:correct horse" {
+		t.Fatalf("hash not upgraded on login: %q", *got.Password)
+	}
+	// ...but a WRONG password must not touch it (we do not have the plaintext).
+	store.accounts[acc.ID] = withPassword(acc, &old)
+	if _, err := svc.Authenticate(ctx, "ada@example.com", "wrong"); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatal(err)
+	}
+	if got, _ := store.GetCredentialAccount(ctx, u.ID); *got.Password != old {
+		t.Fatalf("failed login changed the hash: %q", *got.Password)
+	}
+
+	// 2. A legacy (bcrypt) hash cannot log in; it is a 401, not a 500, and costs the same time.
+	legacy := "legacy:$2a$12$whatever"
+	store.accounts[acc.ID] = withPassword(acc, &legacy)
+	before := hasher.verifies
+	if _, err := svc.Authenticate(ctx, "ada@example.com", "correct horse"); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("legacy hash: got %v, want ErrUnauthorized", err)
+	}
+	if hasher.verifies-before < 2 { // the attempt itself + the timing-equalizing dummy verify
+		t.Errorf("legacy hash path did not equalize timing (%d verifies)", hasher.verifies-before)
+	}
+
+	// 3. A genuinely corrupt hash is a server fault, not "wrong password".
+	garbage := "garbage"
+	store.accounts[acc.ID] = withPassword(acc, &garbage)
+	if _, err := svc.Authenticate(ctx, "ada@example.com", "correct horse"); err == nil || errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("corrupt hash: got %v, want a non-401 error", err)
+	}
+
+	// 4. A user without a credential account (GitHub only) cannot password-login.
+	store.accounts[acc.ID] = withPassword(acc, nil)
+	if _, err := svc.Authenticate(ctx, "ada@example.com", "correct horse"); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("passwordless account: %v", err)
+	}
+	delete(store.accounts, acc.ID)
+	if _, err := svc.Authenticate(ctx, "ada@example.com", "correct horse"); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("no credential account: %v", err)
+	}
+}
+
+func withPassword(a domain.Account, pw *string) domain.Account {
+	a.Password = pw
+	return a
 }
 
 func TestProjectsLifecycleAndIsolation(t *testing.T) {

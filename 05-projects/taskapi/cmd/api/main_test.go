@@ -65,7 +65,7 @@ func TestRunServesAndShutsDownGracefully(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- run(ctx, nil, testEnv(t, addr), &out) }()
 
-	// Wait until the server answers. Startup includes one bcrypt hash at production cost, which
+	// Wait until the server answers. Startup includes one Argon2id hash at production cost, which
 	// is slow under the race detector, hence the generous deadline.
 	var status int
 	for range 1000 {

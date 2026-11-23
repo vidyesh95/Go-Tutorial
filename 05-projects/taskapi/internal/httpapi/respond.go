@@ -43,7 +43,10 @@ type apiError struct {
 }
 
 // Sentinels for errors that originate in this layer (not in the domain).
-var errRateLimited = errors.New("rate limit exceeded")
+var (
+	errRateLimited = errors.New("rate limit exceeded")
+	errBadGateway  = errors.New("upstream identity provider failed")
+)
 
 // badRequestError marks malformed client input detected while decoding (bad JSON, wrong types,
 // unknown fields). Distinct from domain.ValidationError, which means "well-formed but
@@ -79,6 +82,10 @@ func mapError(err error) apiError {
 		return apiError{Status: http.StatusUnauthorized, Code: "unauthorized", Message: "invalid or missing credentials"}
 	case errors.Is(err, domain.ErrForbidden):
 		return apiError{Status: http.StatusForbidden, Code: "forbidden", Message: "you are not allowed to do that"}
+	case errors.Is(err, domain.ErrInvalidToken):
+		return apiError{Status: http.StatusBadRequest, Code: "invalid_token", Message: "the link or token is invalid or has expired"}
+	case errors.Is(err, errBadGateway):
+		return apiError{Status: http.StatusBadGateway, Code: "bad_gateway", Message: "the identity provider could not complete the request"}
 	case errors.Is(err, errRateLimited):
 		return apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "too many requests, slow down"}
 	case errors.Is(err, context.Canceled):

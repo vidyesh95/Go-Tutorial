@@ -27,6 +27,7 @@ import (
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/auth"
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/config"
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/httpapi"
+	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/mailer"
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/service"
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/store"
 )
@@ -60,7 +61,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		return err
 	}
 	log := newLogger(cfg, stdout)
-	log.Info("starting", "config", cfg) // Config redacts the JWT secret via slog.LogValuer
+	log.Info("starting", "config", cfg) // Config redacts the secrets via slog.LogValuer
 
 	db, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
@@ -143,7 +144,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 func buildHandler(ctx context.Context, cfg config.Config, log *slog.Logger, db *sql.DB, draining *atomic.Bool) (http.Handler, error) {
 	st := store.New(db) // *store.Store satisfies the UserRepo/ProjectRepo/TaskRepo interfaces
 
-	hasher, err := auth.NewPasswordHasher(auth.DefaultCost)
+	// Argon2id with the OWASP-recommended parameters (see auth.DefaultParams).
+	hasher, err := auth.NewPasswordHasher(auth.DefaultParams)
 	if err != nil {
 		return nil, err
 	}
@@ -151,9 +153,32 @@ func buildHandler(ctx context.Context, cfg config.Config, log *slog.Logger, db *
 	if err != nil {
 		return nil, err
 	}
-	authSvc, err := service.NewAuthService(st, hasher, issuer)
+	authSvc, err := service.NewAuthService(st, st, hasher, issuer, log)
 	if err != nil {
 		return nil, err
+	}
+	// The second authentication mode: database-backed cookie sessions. The console mailer only
+	// LOGS emails (including their links); swap in a real implementation for production.
+	sessionSvc, err := service.NewSessionAuthService(service.SessionAuthDeps{
+		Auth: authSvc, Users: st, Accounts: st, Sessions: st, Verifications: st,
+		Hasher: hasher, Mailer: mailer.Console{Log: log}, Log: log,
+		Config: service.SessionConfig{TTL: cfg.SessionTTL, UpdateAge: cfg.SessionUpdateAge, PublicURL: cfg.PublicURL},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var github *auth.GitHub // nil = "Sign in with GitHub" disabled
+	if cfg.GitHubEnabled() {
+		github, err = auth.NewGitHub(auth.GitHubConfig{
+			ClientID: cfg.GitHubClientID, ClientSecret: cfg.GitHubClientSecret.Reveal(),
+			RedirectURL: cfg.PublicURL + "/v1/session-auth/oauth/github/callback",
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !cfg.CookieSecure {
+		log.Warn("session cookies are sent WITHOUT the Secure flag; use this for local http development only")
 	}
 
 	return httpapi.NewHandler(ctx, httpapi.Deps{
@@ -167,6 +192,12 @@ func buildHandler(ctx context.Context, cfg config.Config, log *slog.Logger, db *
 		RateRPS:     cfg.RateRPS,
 		RateBurst:   cfg.RateBurst,
 		CORSOrigins: cfg.CORSOrigins,
+
+		SessionAuth:   sessionSvc,
+		GitHub:        github,
+		CookieSecure:  cfg.CookieSecure,
+		AuthRateRPS:   cfg.AuthRateRPS,
+		AuthRateBurst: cfg.AuthRateBurst,
 	}), nil
 }
 

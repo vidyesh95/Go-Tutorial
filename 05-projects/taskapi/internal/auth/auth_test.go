@@ -7,49 +7,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 var testSecret = []byte("0123456789abcdef0123456789abcdef")
-
-func TestPasswordHashAndCompare(t *testing.T) {
-	t.Parallel()
-	h, err := NewPasswordHasher(bcrypt.MinCost)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hash, err := h.Hash("correct horse battery")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(hash, "correct horse") {
-		t.Fatal("hash contains the plaintext")
-	}
-	if err := h.Compare(hash, "correct horse battery"); err != nil {
-		t.Fatalf("right password rejected: %v", err)
-	}
-	if err := h.Compare(hash, "wrong"); !errors.Is(err, ErrPasswordMismatch) {
-		t.Fatalf("wrong password: got %v, want ErrPasswordMismatch", err)
-	}
-	// Same password, different salt -> different hash.
-	hash2, _ := h.Hash("correct horse battery")
-	if hash == hash2 {
-		t.Fatal("hashes are identical; salt is not random")
-	}
-	// A corrupt stored hash is a real error, not a "mismatch".
-	if err := h.Compare("not-a-bcrypt-hash", "x"); err == nil || errors.Is(err, ErrPasswordMismatch) {
-		t.Fatalf("corrupt hash: got %v", err)
-	}
-}
-
-func TestNewPasswordHasherRejectsBadCost(t *testing.T) {
-	t.Parallel()
-	for _, cost := range []int{0, 3, 32} {
-		if _, err := NewPasswordHasher(cost); err == nil {
-			t.Errorf("cost %d accepted", cost)
-		}
-	}
-}
 
 // fakeClock is a mutable time source for expiry tests.
 type fakeClock struct{ t time.Time }

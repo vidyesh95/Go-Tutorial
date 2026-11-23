@@ -28,6 +28,35 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.JWTSecret.Reveal() != goodSecret {
 		t.Fatal("secret not loaded")
 	}
+	// Cookie-session defaults: 7 days, slide after 24h, Secure ON (safe by default), GitHub off.
+	if cfg.SessionTTL != 168*time.Hour || cfg.SessionUpdateAge != 24*time.Hour || !cfg.CookieSecure ||
+		cfg.PublicURL != "http://localhost:8080" || cfg.AuthRateRPS != 0.5 || cfg.AuthRateBurst != 10 || cfg.GitHubEnabled() {
+		t.Fatalf("unexpected session defaults: %+v", cfg)
+	}
+}
+
+func TestLoadSessionAuthOverrides(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"TASKAPI_JWT_SECRET":           goodSecret,
+		"TASKAPI_SESSION_TTL":          "48h",
+		"TASKAPI_SESSION_UPDATE_AGE":   "1h",
+		"TASKAPI_COOKIE_SECURE":        "false",
+		"TASKAPI_PUBLIC_URL":           "https://api.example.com/",
+		"TASKAPI_AUTH_RATE_RPS":        "2",
+		"TASKAPI_AUTH_RATE_BURST":      "3",
+		"TASKAPI_GITHUB_CLIENT_ID":     "id",
+		"TASKAPI_GITHUB_CLIENT_SECRET": "shh-github-secret",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionTTL != 48*time.Hour || cfg.SessionUpdateAge != time.Hour || cfg.CookieSecure ||
+		cfg.PublicURL != "https://api.example.com" || cfg.AuthRateRPS != 2 || cfg.AuthRateBurst != 3 || !cfg.GitHubEnabled() {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", cfg), "shh-github-secret") {
+		t.Fatal("github client secret leaks when the config is printed")
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -67,6 +96,21 @@ func TestLoadErrors(t *testing.T) {
 			"TASKAPI_LOG_FORMAT": "xml", "TASKAPI_RATE_RPS": "0", "TASKAPI_RATE_BURST": "x",
 			"TASKAPI_SHUTDOWN_TIMEOUT": "-1s",
 		}, []string{"TASKAPI_JWT_TTL", "TASKAPI_LOG_LEVEL", "TASKAPI_LOG_FORMAT", "TASKAPI_RATE_RPS", "TASKAPI_RATE_BURST", "TASKAPI_SHUTDOWN_TIMEOUT"}},
+		{"session durations", map[string]string{
+			"TASKAPI_JWT_SECRET": goodSecret, "TASKAPI_SESSION_TTL": "7d", "TASKAPI_SESSION_UPDATE_AGE": "0s",
+		}, []string{"TASKAPI_SESSION_TTL", "TASKAPI_SESSION_UPDATE_AGE"}},
+		{"update age above ttl", map[string]string{
+			"TASKAPI_JWT_SECRET": goodSecret, "TASKAPI_SESSION_TTL": "1h", "TASKAPI_SESSION_UPDATE_AGE": "2h",
+		}, []string{"must not exceed TASKAPI_SESSION_TTL"}},
+		{"bad cookie flag and url", map[string]string{
+			"TASKAPI_JWT_SECRET": goodSecret, "TASKAPI_COOKIE_SECURE": "maybe", "TASKAPI_PUBLIC_URL": "not a url",
+		}, []string{"TASKAPI_COOKIE_SECURE", "TASKAPI_PUBLIC_URL"}},
+		{"github id without secret", map[string]string{
+			"TASKAPI_JWT_SECRET": goodSecret, "TASKAPI_GITHUB_CLIENT_ID": "id",
+		}, []string{"must be set together"}},
+		{"github secret without id", map[string]string{
+			"TASKAPI_JWT_SECRET": goodSecret, "TASKAPI_GITHUB_CLIENT_SECRET": "s",
+		}, []string{"must be set together"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

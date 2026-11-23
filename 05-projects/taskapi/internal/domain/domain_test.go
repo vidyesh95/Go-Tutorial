@@ -19,7 +19,8 @@ func TestSignupInputValidate(t *testing.T) {
 		{"display name rejected", SignupInput{Email: "Ada <ada@example.com>", Name: "Ada", Password: "correct horse"}, []string{"email"}},
 		{"empty name", SignupInput{Email: "ada@example.com", Name: "", Password: "correct horse"}, []string{"name"}},
 		{"short password", SignupInput{Email: "ada@example.com", Name: "Ada", Password: "short"}, []string{"password"}},
-		{"password over bcrypt limit", SignupInput{Email: "ada@example.com", Name: "Ada", Password: strings.Repeat("x", 73)}, []string{"password"}},
+		{"password over the cap", SignupInput{Email: "ada@example.com", Name: "Ada", Password: strings.Repeat("x", MaxPasswordBytes+1)}, []string{"password"}},
+		{"long password is fine now (argon2id has no 72 byte limit)", SignupInput{Email: "ada@example.com", Name: "Ada", Password: strings.Repeat("x", MaxPasswordBytes)}, nil},
 		{"everything wrong", SignupInput{}, []string{"email", "name", "password"}},
 	}
 	for _, tt := range tests {

@@ -20,7 +20,7 @@ func TestFullFlow(t *testing.T) {
 	if signup.status != http.StatusCreated {
 		t.Fatalf("signup: %d %s", signup.status, signup.raw)
 	}
-	if strings.Contains(string(signup.raw), "password") || strings.Contains(string(signup.raw), "$2a$") {
+	if strings.Contains(string(signup.raw), "password") || strings.Contains(string(signup.raw), "$argon2") {
 		t.Fatalf("signup response leaks password material: %s", signup.raw)
 	}
 	if got := signup.obj(t)["email"]; got != "ada@example.com" {

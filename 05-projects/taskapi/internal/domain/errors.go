@@ -26,6 +26,10 @@ var (
 	// ownership checks deliberately use ErrNotFound instead; this one is for future role checks
 	// (e.g. admin-only endpoints) where revealing existence is not a concern.
 	ErrForbidden = errors.New("forbidden")
+	// ErrInvalidToken means a single-use emailed token (email verification, password reset) is
+	// unknown, already used or expired. One error for all three: telling them apart would help
+	// someone guessing tokens.
+	ErrInvalidToken = errors.New("invalid or expired token")
 )
 
 // ValidationError reports which input fields were rejected and why. It is a pointer type so

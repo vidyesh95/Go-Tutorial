@@ -9,16 +9,39 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/auth"
+	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/auth/githubtest"
+	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/mailer"
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/service"
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/store"
 )
+
+// fastParams are tiny Argon2id parameters so the many signups in these tests stay quick.
+var fastParams = auth.Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}
+
+// testClock is the clock injected into the session service, so tests can age sessions and
+// tokens without sleeping.
+type testClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *testClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
 
 var testSecret = []byte("0123456789abcdef0123456789abcdef")
 
@@ -28,17 +51,29 @@ type testEnv struct {
 	srv      *httptest.Server
 	client   *http.Client
 	draining *atomic.Bool
+
+	mail   *mailer.Memory     // captures emails instead of sending them
+	clock  *testClock         // the session service's clock
+	github *githubtest.Server // nil unless the env was built withGitHub
+	store  *store.Store
 }
 
 type envOptions struct {
-	rateRPS     float64
-	rateBurst   int
-	corsOrigins []string
+	rateRPS      float64
+	rateBurst    int
+	authRateRPS  float64
+	authRate     int
+	corsOrigins  []string
+	cookieSecure bool
+	withGitHub   bool
 }
 
 func newTestEnv(t *testing.T, opts ...func(*envOptions)) *testEnv {
 	t.Helper()
-	o := envOptions{rateRPS: 1000, rateBurst: 1000} // effectively unlimited unless a test says otherwise
+	// Effectively unlimited unless a test says otherwise. cookieSecure is false because the test
+	// server speaks plain http and Go's cookie jar (like a browser) never sends Secure cookies
+	// over http.
+	o := envOptions{rateRPS: 1000, rateBurst: 1000, authRateRPS: 1000, authRate: 1000}
 	for _, f := range opts {
 		f(&o)
 	}
@@ -53,19 +88,43 @@ func newTestEnv(t *testing.T, opts ...func(*envOptions)) *testEnv {
 	}
 	st := store.New(db)
 
-	hasher, _ := auth.NewPasswordHasher(bcrypt.MinCost) // fast; the cost is irrelevant to HTTP behaviour
+	hasher, err := auth.NewPasswordHasher(fastParams)
+	if err != nil {
+		t.Fatal(err)
+	}
 	issuer, err := auth.NewIssuer(testSecret, time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc, err := service.NewAuthService(st, hasher, issuer)
+	log := slog.New(slog.DiscardHandler)
+	authSvc, err := service.NewAuthService(st, st, hasher, issuer, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := &testClock{t: time.Now().UTC()}
+	mail := &mailer.Memory{}
+	sessionSvc, err := service.NewSessionAuthService(service.SessionAuthDeps{
+		Auth: authSvc, Users: st, Accounts: st, Sessions: st, Verifications: st,
+		Hasher: hasher, Mailer: mail, Log: log,
+		Config: service.SessionConfig{PublicURL: "https://api.example.test", Now: clock.Now},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	var fake *githubtest.Server
+	var gh *auth.GitHub
+	if o.withGitHub {
+		fake = githubtest.New(t)
+		// The redirect URL only has to be well-formed: the tests play the browser themselves.
+		if gh, err = auth.NewGitHub(fake.Config("http://localhost/v1/session-auth/oauth/github/callback")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	draining := &atomic.Bool{}
 	handler := NewHandler(t.Context(), Deps{
-		Logger:   slog.New(slog.DiscardHandler),
+		Logger:   log,
 		Auth:     authSvc,
 		Projects: service.NewProjectService(st),
 		Tasks:    service.NewTaskService(st, st),
@@ -74,9 +133,12 @@ func newTestEnv(t *testing.T, opts ...func(*envOptions)) *testEnv {
 		Draining: draining,
 		RateRPS:  o.rateRPS, RateBurst: o.rateBurst,
 		CORSOrigins: o.corsOrigins,
+
+		SessionAuth: sessionSvc, GitHub: gh, CookieSecure: o.cookieSecure,
+		AuthRateRPS: o.authRateRPS, AuthRateBurst: o.authRate,
 	})
 	srv := httptest.NewTestServer(t, handler)
-	return &testEnv{srv: srv, client: srv.Client(), draining: draining}
+	return &testEnv{srv: srv, client: srv.Client(), draining: draining, mail: mail, clock: clock, github: fake, store: st}
 }
 
 // resp is a decoded HTTP response.

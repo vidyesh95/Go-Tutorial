@@ -16,6 +16,7 @@ import (
 
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/auth"
 	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/domain"
+	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/service"
 )
 
 // A middleware wraps a handler to add behaviour before/after it (logging, auth, ...).
@@ -35,7 +36,7 @@ type ctxKey int
 
 const (
 	ctxRequestID ctxKey = iota
-	ctxUserID
+	ctxAuth
 )
 
 func requestIDFrom(ctx context.Context) string {
@@ -43,12 +44,29 @@ func requestIDFrom(ctx context.Context) string {
 	return id
 }
 
-// userIDFrom returns the authenticated user's id. It is only meaningful inside handlers wrapped
-// by requireAuth.
-func userIDFrom(ctx context.Context) string {
-	id, _ := ctx.Value(ctxUserID).(string)
-	return id
+// authMethod says HOW the request proved its identity.
+type authMethod string
+
+const (
+	authJWT     authMethod = "jwt"     // Authorization: Bearer <jwt>   (stateless)
+	authSession authMethod = "session" // session cookie                 (database-backed)
+)
+
+// authInfo is what requireAuth puts in the request context.
+type authInfo struct {
+	UserID  string
+	Method  authMethod
+	Session domain.Session // only set when Method == authSession
 }
+
+// authFrom returns the authentication result. Only meaningful inside handlers wrapped by requireAuth.
+func authFrom(ctx context.Context) authInfo {
+	info, _ := ctx.Value(ctxAuth).(authInfo)
+	return info
+}
+
+// userIDFrom returns the authenticated user's id, whichever authentication mode was used.
+func userIDFrom(ctx context.Context) string { return authFrom(ctx).UserID }
 
 // --- statusWriter ---------------------------------------------------------------------------
 
@@ -203,9 +221,12 @@ func recoverer(log *slog.Logger) middleware {
 // cors lets browser apps from the listed origins call the API. CORS is enforced by the BROWSER;
 // it does not protect the API from curl or other servers (authentication does that).
 //
-// We use bearer tokens in the Authorization header rather than cookies, so we never send
-// Access-Control-Allow-Credentials and a cross-site page cannot ride on a victim's ambient
-// credentials. An empty allow-list disables CORS entirely (the safe default).
+// Bearer-token clients do not need credentialed CORS. Cookie-session clients (a browser SPA on
+// another origin) DO: the browser only sends and accepts cookies cross-origin when the response
+// carries Access-Control-Allow-Credentials: true, and it refuses that together with the wildcard
+// origin. So credentials are allowed ONLY for origins named explicitly in the allow-list, never
+// for "*". Those origins are also trusted by the CSRF check (see NewHandler). An empty allow-list
+// disables CORS entirely (the safe default).
 func cors(allowed []string) middleware {
 	return func(next http.Handler) http.Handler {
 		if len(allowed) == 0 {
@@ -220,10 +241,11 @@ func cors(allowed []string) middleware {
 			}
 			h := w.Header()
 			h.Add("Vary", "Origin") // responses differ per Origin; caches must know
-			if anyOrigin {
-				h.Set("Access-Control-Allow-Origin", "*")
-			} else {
+			if slices.Contains(allowed, origin) {
 				h.Set("Access-Control-Allow-Origin", origin)
+				h.Set("Access-Control-Allow-Credentials", "true") // lets the SPA send/receive the session cookie
+			} else {
+				h.Set("Access-Control-Allow-Origin", "*")
 			}
 			h.Set("Access-Control-Expose-Headers", "X-Request-ID, Location")
 
@@ -247,31 +269,105 @@ type TokenVerifier interface {
 	Parse(token string) (auth.Claims, error)
 }
 
-// requireAuth rejects requests without a valid "Authorization: Bearer <jwt>" and otherwise puts
-// the user id in the request context. It is applied per route (not globally) so public routes
-// like login stay open.
+// SessionVerifier resolves a session cookie value. *service.SessionAuthService satisfies it.
+type SessionVerifier interface {
+	Authenticate(ctx context.Context, token string) (service.SessionState, error)
+}
+
+// requireAuth accepts EITHER of the two authentication modes and puts the result in the context:
 //
-// The token is stateless: we trust the signature and expiry without a database lookup. The
-// tradeoff is that a token stays valid until it expires even if the user is deleted or the
-// password changes. Short TTLs plus refresh tokens (README: next steps) shrink that window.
-func requireAuth(tokens TokenVerifier, log *slog.Logger) middleware {
+//  1. "Authorization: Bearer <jwt>"  stateless, for mobile apps, services and scripts.
+//  2. the session cookie             database-backed, for browsers.
+//
+// If an Authorization header is present it alone decides (a bad token is a 401, never a silent
+// fall-through to the cookie). Otherwise the cookie is used. It is applied per route (not
+// globally) so public routes like login stay open.
+//
+// The two modes have opposite security profiles, which is why they are handled differently:
+//
+//   - Bearer tokens must be attached by the client's own code. A malicious web page cannot make a
+//     victim's browser add an Authorization header, so there is nothing to forge: no CSRF
+//     protection is needed.
+//   - Cookies are attached by the BROWSER automatically to every request to our origin, including
+//     ones triggered by another site (<form action="https://api..." method=post>). That is the
+//     CSRF attack. So every cookie-authenticated request goes through http.CrossOriginProtection
+//     (which inspects the Sec-Fetch-Site / Origin headers browsers set and rejects unsafe
+//     cross-origin requests), on top of the cookie's SameSite=Lax attribute: two independent
+//     layers, either of which alone stops the classic attack.
+//
+// The JWT is stateless: trusted by signature and expiry without a database lookup, so it stays
+// valid until it expires even if the user is deleted or changes their password. A session is
+// looked up on every request, which is exactly what makes it revocable.
+func requireAuth(tokens TokenVerifier, sessions SessionVerifier, cookies cookieConfig, cop *http.CrossOriginProtection, log *slog.Logger) middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
-			if !found || !strings.EqualFold(scheme, "Bearer") || token == "" {
+			reject := func(reason any) {
+				// Log the reason at debug (useful when diagnosing "why am I logged out?"), but the
+				// client only ever sees a generic 401. Tokens themselves are never logged.
+				log.DebugContext(r.Context(), "authentication rejected", "reason", reason, "request_id", requestIDFrom(r.Context()))
+				writeError(w, r, log, domain.ErrUnauthorized)
+			}
+
+			// --- Mode 1: Bearer JWT -----------------------------------------------------------------
+			if header := r.Header.Get("Authorization"); header != "" {
+				scheme, token, found := strings.Cut(header, " ")
+				if !found || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
+					writeError(w, r, log, domain.ErrUnauthorized)
+					return
+				}
+				claims, err := tokens.Parse(strings.TrimSpace(token))
+				if err != nil {
+					reject(err)
+					return
+				}
+				ctx := context.WithValue(r.Context(), ctxAuth, authInfo{UserID: claims.UserID, Method: authJWT})
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// --- Mode 2: session cookie -------------------------------------------------------------
+			c, err := r.Cookie(cookies.Name)
+			if err != nil || c.Value == "" {
 				writeError(w, r, log, domain.ErrUnauthorized)
 				return
 			}
-			claims, err := tokens.Parse(strings.TrimSpace(token))
-			if err != nil {
-				// Log the reason at debug (useful when diagnosing "why am I logged out?"), but
-				// the client only ever sees a generic 401. The token itself is never logged.
-				log.DebugContext(r.Context(), "token rejected", "reason", err, "request_id", requestIDFrom(r.Context()))
-				writeError(w, r, log, domain.ErrUnauthorized)
+			// CSRF first: a forged cross-site request must not even get its session refreshed.
+			if err := cop.Check(r); err != nil {
+				log.InfoContext(r.Context(), "cross-origin request rejected", "reason", err, "request_id", requestIDFrom(r.Context()))
+				writeError(w, r, log, domain.ErrForbidden)
 				return
 			}
-			ctx := context.WithValue(r.Context(), ctxUserID, claims.UserID)
+			state, err := sessions.Authenticate(r.Context(), c.Value)
+			if errors.Is(err, domain.ErrUnauthorized) {
+				cookies.clear(w) // tell the browser to drop the dead cookie
+				reject(err)
+				return
+			} else if err != nil {
+				writeError(w, r, log, err)
+				return
+			}
+			if state.Refreshed {
+				cookies.set(w, c.Value) // sliding expiry: renew the browser's copy too
+			}
+			ctx := context.WithValue(r.Context(), ctxAuth, authInfo{UserID: state.Session.UserID, Method: authSession, Session: state.Session})
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// csrfProtect rejects unsafe (POST/PUT/PATCH/DELETE) cross-origin browser requests. It guards the
+// session-auth endpoints that do not go through requireAuth: sign-in, sign-up, sign-out, password
+// reset. "Login CSRF" is real: a hostile page that silently signs the victim into the ATTACKER'S
+// account can capture whatever the victim then stores there.
+func csrfProtect(cop *http.CrossOriginProtection, log *slog.Logger) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := cop.Check(r); err != nil {
+				log.InfoContext(r.Context(), "cross-origin request rejected", "reason", err, "request_id", requestIDFrom(r.Context()))
+				writeError(w, r, log, domain.ErrForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

@@ -19,18 +19,82 @@ const (
 	DefaultPageSize  = 20
 	MaxPageSize      = 100
 	MinPasswordBytes = 8
-	// MaxPasswordBytes is bcrypt's hard input limit: it silently ignores (or, in current
-	// x/crypto, rejects) anything beyond 72 bytes, so we refuse long passwords up front.
-	MaxPasswordBytes = 72
+	// MaxPasswordBytes bounds the CPU a single login or signup can make us spend. Argon2id,
+	// unlike bcrypt (72-byte limit), would happily hash megabytes; 128 bytes is far more than
+	// any typed password or password-manager output. Mirrors auth.MaxPasswordBytes.
+	MaxPasswordBytes = 128
 )
 
-// User is an account. PasswordHash is excluded from JSON so no handler can leak it by accident.
+// Account provider ids. In Better Auth's data model a user can have several "accounts", one per
+// way of signing in.
+const (
+	ProviderCredential = "credential" // email + password; the account holds the argon2id hash
+	ProviderGitHub     = "github"
+)
+
+// Purposes of a verification token. The stored identifier is "<purpose>:<user id>".
+const (
+	PurposeEmailVerification = "email-verification"
+	PurposePasswordReset     = "password-reset"
+)
+
+// User is a person. WHO they are lives here; HOW they authenticate lives in Account rows, so the
+// password hash is not part of User and no handler can leak it by accident.
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	Email         string    `json:"email"`
+	Name          string    `json:"name"`
+	EmailVerified bool      `json:"email_verified"`
+	Image         *string   `json:"image"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// Account is one way a user can sign in (Better Auth's "account" table). Never serialized.
+type Account struct {
+	ID         string
+	UserID     string
+	ProviderID string // ProviderCredential or ProviderGitHub
+	// AccountID identifies the user at the provider: the user's own id for credential accounts,
+	// the provider's user id (e.g. GitHub's numeric id) for OAuth accounts.
+	AccountID string
+	// Password is the argon2id PHC string; set only for credential accounts.
+	Password *string
+
+	// OAuth provider credentials; nil for credential accounts.
+	AccessToken           *string
+	RefreshToken          *string
+	IDToken               *string
+	AccessTokenExpiresAt  *time.Time
+	RefreshTokenExpiresAt *time.Time
+	Scope                 *string
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Session is a server-side login session (cookie authentication). The JSON form is what clients
+// may see: no user id, and above all never the token or its hash.
+type Session struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"-"`
+	TokenHash string    `json:"-"` // SHA-256 of the cookie value; see auth.NewToken
+	ExpiresAt time.Time `json:"expires_at"`
+	IPAddress string    `json:"ip_address"`
+	UserAgent string    `json:"user_agent"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Verification is a single-use emailed token (verify email, reset password). Value holds the
+// SHA-256 of the token, never the token.
+type Verification struct {
+	ID         string
+	Identifier string // "<purpose>:<user id>"
+	Value      string
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Project groups tasks and belongs to exactly one user.
@@ -110,15 +174,11 @@ func (in *SignupInput) Normalize() {
 // Validate checks the (normalized) input. Error messages never echo the password.
 func (in SignupInput) Validate() error {
 	f := fieldErrors{}
-	if _, err := mail.ParseAddress(in.Email); err != nil || len(in.Email) > MaxEmailLength || !isBareAddress(in.Email) {
-		f.add("email", "must be a valid email address")
-	}
+	validateEmailField(f, in.Email)
 	if n := utf8.RuneCountInString(in.Name); n < 1 || n > MaxNameLength {
 		f.add("name", fmt.Sprintf("must be 1-%d characters", MaxNameLength))
 	}
-	if n := len(in.Password); n < MinPasswordBytes || n > MaxPasswordBytes {
-		f.add("password", fmt.Sprintf("must be %d-%d bytes", MinPasswordBytes, MaxPasswordBytes))
-	}
+	validatePasswordField(f, "password", in.Password)
 	return f.err()
 }
 
@@ -127,6 +187,33 @@ func (in SignupInput) Validate() error {
 func isBareAddress(s string) bool {
 	a, err := mail.ParseAddress(s)
 	return err == nil && a.Address == s
+}
+
+// ValidatePassword applies the password length rules (bytes, so multi-byte characters count
+// fully, matching what the hash function actually receives).
+func ValidatePassword(field, password string) error {
+	f := fieldErrors{}
+	validatePasswordField(f, field, password)
+	return f.err()
+}
+
+func validatePasswordField(f fieldErrors, field, password string) {
+	if n := len(password); n < MinPasswordBytes || n > MaxPasswordBytes {
+		f.add(field, fmt.Sprintf("must be %d-%d bytes", MinPasswordBytes, MaxPasswordBytes))
+	}
+}
+
+// ValidateEmail checks that s (already normalized) is a bare, plausible email address.
+func ValidateEmail(s string) error {
+	f := fieldErrors{}
+	validateEmailField(f, s)
+	return f.err()
+}
+
+func validateEmailField(f fieldErrors, s string) {
+	if _, err := mail.ParseAddress(s); err != nil || len(s) > MaxEmailLength || !isBareAddress(s) {
+		f.add("email", "must be a valid email address")
+	}
 }
 
 // ValidateProjectName checks a project name.

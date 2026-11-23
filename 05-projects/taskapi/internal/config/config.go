@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +35,24 @@ type Config struct {
 	RateBurst       int
 	CORSOrigins     []string
 	ShutdownTimeout time.Duration
+
+	// Cookie-session authentication (Better Auth-style mode).
+	SessionTTL       time.Duration // how long a session lives after its last refresh
+	SessionUpdateAge time.Duration // minimum age before activity extends the session again
+	CookieSecure     bool          // Secure flag on cookies; only disable for plain-http local dev
+	PublicURL        string        // externally visible base URL: links in emails, OAuth callback
+
+	// Stricter limit for credential endpoints (sign-in, sign-up, password reset...).
+	AuthRateRPS   float64
+	AuthRateBurst int
+
+	// GitHub OAuth is enabled only when both are set.
+	GitHubClientID     string
+	GitHubClientSecret Secret
 }
+
+// GitHubEnabled reports whether "Sign in with GitHub" is configured.
+func (c Config) GitHubEnabled() bool { return c.GitHubClientID != "" && c.GitHubClientSecret != "" }
 
 // Secret is a string that refuses to print itself. Every formatting path (%v, %+v, %#v, %s and
 // slog) returns a placeholder, so logging the whole Config by accident cannot leak the key.
@@ -68,6 +86,14 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("rate_burst", c.RateBurst),
 		slog.String("cors_origins", strings.Join(c.CORSOrigins, ",")),
 		slog.String("shutdown_timeout", c.ShutdownTimeout.String()),
+		slog.String("session_ttl", c.SessionTTL.String()),
+		slog.String("session_update_age", c.SessionUpdateAge.String()),
+		slog.Bool("cookie_secure", c.CookieSecure),
+		slog.String("public_url", c.PublicURL),
+		slog.Float64("auth_rate_rps", c.AuthRateRPS),
+		slog.Int("auth_rate_burst", c.AuthRateBurst),
+		slog.Bool("github_enabled", c.GitHubEnabled()),
+		slog.Any("github_client_secret", c.GitHubClientSecret),
 	)
 }
 
@@ -122,6 +148,32 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.RateBurst, err = strconv.Atoi(str("TASKAPI_RATE_BURST", "20")); err != nil || cfg.RateBurst < 1 {
 		fail("TASKAPI_RATE_BURST", "must be a positive integer")
+	}
+	if cfg.SessionTTL, err = time.ParseDuration(str("TASKAPI_SESSION_TTL", "168h")); err != nil || cfg.SessionTTL <= 0 {
+		fail("TASKAPI_SESSION_TTL", "must be a positive duration like 168h (7 days; time.ParseDuration has no 'd' unit)")
+	}
+	if cfg.SessionUpdateAge, err = time.ParseDuration(str("TASKAPI_SESSION_UPDATE_AGE", "24h")); err != nil || cfg.SessionUpdateAge <= 0 {
+		fail("TASKAPI_SESSION_UPDATE_AGE", "must be a positive duration like 24h")
+	} else if cfg.SessionTTL > 0 && cfg.SessionUpdateAge > cfg.SessionTTL {
+		fail("TASKAPI_SESSION_UPDATE_AGE", "must not exceed TASKAPI_SESSION_TTL")
+	}
+	if cfg.CookieSecure, err = strconv.ParseBool(str("TASKAPI_COOKIE_SECURE", "true")); err != nil {
+		fail("TASKAPI_COOKIE_SECURE", "must be true or false")
+	}
+	cfg.PublicURL = strings.TrimRight(str("TASKAPI_PUBLIC_URL", "http://localhost:8080"), "/")
+	if u, err := url.Parse(cfg.PublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		fail("TASKAPI_PUBLIC_URL", "must be an absolute http(s) URL like https://api.example.com")
+	}
+	if cfg.AuthRateRPS, err = strconv.ParseFloat(str("TASKAPI_AUTH_RATE_RPS", "0.5"), 64); err != nil || cfg.AuthRateRPS <= 0 {
+		fail("TASKAPI_AUTH_RATE_RPS", "must be a positive number")
+	}
+	if cfg.AuthRateBurst, err = strconv.Atoi(str("TASKAPI_AUTH_RATE_BURST", "10")); err != nil || cfg.AuthRateBurst < 1 {
+		fail("TASKAPI_AUTH_RATE_BURST", "must be a positive integer")
+	}
+	cfg.GitHubClientID = str("TASKAPI_GITHUB_CLIENT_ID", "")
+	cfg.GitHubClientSecret = Secret(str("TASKAPI_GITHUB_CLIENT_SECRET", ""))
+	if (cfg.GitHubClientID == "") != (cfg.GitHubClientSecret == "") {
+		fail("TASKAPI_GITHUB_CLIENT_ID", "TASKAPI_GITHUB_CLIENT_ID and TASKAPI_GITHUB_CLIENT_SECRET must be set together")
 	}
 	for origin := range strings.SplitSeq(getenv("TASKAPI_CORS_ORIGINS"), ",") {
 		if origin = strings.TrimSpace(origin); origin != "" {

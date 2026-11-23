@@ -41,10 +41,18 @@ func id(prefix string) string {
 
 var now = time.Date(2026, 3, 4, 5, 6, 7, 123_000_000, time.UTC)
 
+// credentialAccount builds the email+password account every signup creates.
+func credentialAccount(userID, hash string) domain.Account {
+	return domain.Account{
+		ID: id("a"), UserID: userID, ProviderID: domain.ProviderCredential, AccountID: userID,
+		Password: &hash, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
 func mustUser(t *testing.T, s *Store, email string) domain.User {
 	t.Helper()
-	u := domain.User{ID: id("u"), Email: email, Name: "Test", PasswordHash: "hash", CreatedAt: now}
-	if err := s.CreateUser(t.Context(), u); err != nil {
+	u := domain.User{ID: id("u"), Email: email, Name: "Test", CreatedAt: now, UpdatedAt: now}
+	if err := s.CreateUserWithAccount(t.Context(), u, credentialAccount(u.ID, "hash")); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 	return u
@@ -95,9 +103,24 @@ func TestUsers(t *testing.T) {
 	if _, err := s.GetUserByEmail(ctx, "nobody@example.com"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing user: got %v, want ErrNotFound", err)
 	}
-	dup := domain.User{ID: id("u"), Email: "ada@example.com", Name: "Again", PasswordHash: "h", CreatedAt: now}
-	if err := s.CreateUser(ctx, dup); !errors.Is(err, domain.ErrConflict) {
+	dup := domain.User{ID: id("u"), Email: "ada@example.com", Name: "Again", CreatedAt: now, UpdatedAt: now}
+	if err := s.CreateUserWithAccount(ctx, dup, credentialAccount(dup.ID, "h")); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("duplicate email: got %v, want ErrConflict", err)
+	}
+	// The failed signup was atomic: no orphan account for the rejected user.
+	if _, err := s.GetCredentialAccount(ctx, dup.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("account of rolled-back user exists: %v", err)
+	}
+
+	if err := s.MarkEmailVerified(ctx, u.ID, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetUserByID(ctx, u.ID)
+	if !got.EmailVerified || !got.UpdatedAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("after verify: %+v", got)
+	}
+	if err := s.MarkEmailVerified(ctx, "ghost", now); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("verify unknown user: %v", err)
 	}
 }
 
@@ -341,7 +364,7 @@ func TestWithTx(t *testing.T) {
 	// Rollback on error: the user inserted inside the transaction must vanish.
 	boom := errors.New("boom")
 	err := s.WithTx(ctx, func(tx *Store) error {
-		if err := tx.CreateUser(ctx, domain.User{ID: id("u"), Email: "rollback@example.com", Name: "n", PasswordHash: "h", CreatedAt: now}); err != nil {
+		if err := tx.createUser(ctx, domain.User{ID: id("u"), Email: "rollback@example.com", Name: "n", CreatedAt: now, UpdatedAt: now}); err != nil {
 			return err
 		}
 		return boom
@@ -361,7 +384,7 @@ func TestWithTx(t *testing.T) {
 			}
 		}()
 		_ = s.WithTx(ctx, func(tx *Store) error {
-			_ = tx.CreateUser(ctx, domain.User{ID: id("u"), Email: "panic@example.com", Name: "n", PasswordHash: "h", CreatedAt: now})
+			_ = tx.createUser(ctx, domain.User{ID: id("u"), Email: "panic@example.com", Name: "n", CreatedAt: now, UpdatedAt: now})
 			panic("oops")
 		})
 	}()
@@ -371,7 +394,7 @@ func TestWithTx(t *testing.T) {
 
 	// Commit on success.
 	if err := s.WithTx(ctx, func(tx *Store) error {
-		return tx.CreateUser(ctx, domain.User{ID: id("u"), Email: "commit@example.com", Name: "n", PasswordHash: "h", CreatedAt: now})
+		return tx.createUser(ctx, domain.User{ID: id("u"), Email: "commit@example.com", Name: "n", CreatedAt: now, UpdatedAt: now})
 	}); err != nil {
 		t.Fatal(err)
 	}

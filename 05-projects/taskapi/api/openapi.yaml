@@ -7,7 +7,13 @@ info:
 
     Conventions
     - All bodies are JSON. Errors always use the envelope `{"error": {"code", "message", "fields?", "request_id"}}`.
-    - Authenticate with `Authorization: Bearer <token>` (token from `POST /v1/auth/login`).
+    - Two authentication modes, accepted interchangeably on every protected route:
+      1. `Authorization: Bearer <jwt>` (token from `POST /v1/auth/login`): stateless, for mobile apps, services and scripts.
+      2. The `taskapi_session` cookie (set by `/v1/session-auth/sign-in/email`, sign-up or GitHub sign-in): a database-backed
+         session, for browsers. Cookie requests that change state are CSRF-protected: a cross-origin browser request
+         (`Sec-Fetch-Site: cross-site`, or an `Origin` that is not ours or in the CORS allow-list) gets 403.
+      If an `Authorization` header is present it alone decides; there is no fallback to the cookie.
+    - Passwords are hashed with Argon2id (8-128 bytes).
     - A resource that belongs to another user is reported as 404, never 403, so ids cannot be probed.
     - List endpoints use keyset pagination: pass the `next_cursor` of one page as `cursor` of the next.
     - Responses carry an `X-Request-ID` header; quote it when reporting a problem.
@@ -15,9 +21,12 @@ servers:
   - url: http://localhost:8080
 security:
   - bearerAuth: []
+  - cookieAuth: []
 
 tags:
   - name: auth
+  - name: session-auth
+    description: Cookie sessions, email verification, password reset and GitHub sign-in (Better Auth-style).
   - name: projects
   - name: tasks
   - name: ops
@@ -270,12 +279,295 @@ paths:
           content:
             text/plain: { schema: { type: string } }
 
+  # ---- Cookie-session authentication (Better Auth-style) --------------------------------------
+  /v1/session-auth/sign-up/email:
+    post:
+      tags: [session-auth]
+      summary: Create an account and sign in (sets the session cookie)
+      description: Creates the user and its credential account atomically, starts a session and emails a verification link.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Account created and signed in
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SessionCookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/session-auth/sign-in/email:
+    post:
+      tags: [session-auth]
+      summary: Sign in with email and password (sets the session cookie)
+      description: Unknown email and wrong password return the same 401. An outdated password hash is transparently upgraded on success.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Signed in
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SessionCookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/session-auth/sign-out:
+    post:
+      tags: [session-auth]
+      summary: End the current session and clear the cookie
+      description: Idempotent; works with a stale cookie or none.
+      security: []
+      responses:
+        "200":
+          description: Signed out
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/session-auth/get-session:
+    get:
+      tags: [session-auth]
+      summary: The current user and session
+      description: Requires the session cookie (a Bearer JWT has no server-side session, so it gets 401).
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/session-auth/list-sessions:
+    get:
+      tags: [session-auth]
+      summary: The signed-in user's active sessions (devices)
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200":
+          description: 'Active sessions, newest first; the one making this request has `current: true`'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/SessionListItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/session-auth/revoke-session:
+    post:
+      tags: [session-auth]
+      summary: Sign one of the user's sessions out
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              additionalProperties: false
+              properties:
+                id: { type: string, description: A session id from list-sessions }
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/session-auth/revoke-other-sessions:
+    post:
+      tags: [session-auth]
+      summary: Sign out every device except the current one
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200":
+          description: Done
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/session-auth/send-verification-email:
+    post:
+      tags: [session-auth]
+      summary: (Re)send the email-verification link
+      description: Works with either authentication mode. Does nothing if the email is already verified. A new link invalidates the previous one.
+      responses:
+        "200":
+          description: Done
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/session-auth/verify-email:
+    get:
+      tags: [session-auth]
+      summary: Confirm an email address (the link in the verification email)
+      description: The token is single-use and valid for 24 hours.
+      security: []
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Email verified
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "400": { $ref: "#/components/responses/InvalidToken" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/session-auth/forget-password:
+    post:
+      tags: [session-auth]
+      summary: Email a password-reset link
+      description: Always 200 for a well-formed email, whether or not an account exists (no user enumeration).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: If the account exists, an email was sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/session-auth/reset-password:
+    post:
+      tags: [session-auth]
+      summary: Set a new password with a reset token
+      description: |
+        The token is single-use and valid for 1 hour. The new password is validated before the token is consumed.
+        On success the password is replaced (Argon2id) and ALL of the user's sessions are deleted.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              additionalProperties: false
+              properties:
+                token: { type: string }
+                new_password: { type: string, minLength: 8, maxLength: 128, writeOnly: true, description: Length in BYTES }
+      responses:
+        "200":
+          description: Password changed; every session revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "400": { $ref: "#/components/responses/InvalidToken" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/session-auth/oauth/github:
+    get:
+      tags: [session-auth]
+      summary: Start "Sign in with GitHub"
+      description: |
+        Redirects (302) to GitHub with an unguessable `state` and a PKCE S256 challenge; `state` and the verifier are kept in a
+        short-lived HttpOnly cookie (`taskapi_oauth`). 404 unless TASKAPI_GITHUB_CLIENT_ID/SECRET are configured.
+      security: []
+      responses:
+        "302":
+          description: Redirect to GitHub
+          headers:
+            Location: { schema: { type: string } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/session-auth/oauth/github/callback:
+    get:
+      tags: [session-auth]
+      summary: GitHub redirects back here
+      description: |
+        Validates `state` against the cookie, exchanges `code` (with the PKCE verifier), loads the profile and primary verified email,
+        then signs in: an existing GitHub link is reused; a local user with the same email is linked only if their email is verified
+        (otherwise 409); else a new, verified user is created. Sets the session cookie.
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string }, description: Set by GitHub when the user denies access }
+      responses:
+        "200":
+          description: Signed in
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SessionCookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "502":
+          description: GitHub rejected the code or is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: taskapi_session
+      description: |
+        Opaque random session token (HttpOnly, SameSite=Lax, Secure in production). Only its SHA-256 is stored server-side.
+        Requests with this cookie that use POST/PUT/PATCH/DELETE are subject to cross-origin (CSRF) protection.
+
+  headers:
+    SessionCookie:
+      description: "`taskapi_session=<token>; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax` (plus `Secure` when TASKAPI_COOKIE_SECURE=true, the default)"
+      schema: { type: string }
 
   parameters:
     Id:
@@ -295,6 +587,16 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
+    Forbidden:
+      description: Cross-origin browser request rejected by the CSRF protection (cookie-authenticated or credential endpoints)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidToken:
+      description: The emailed token is unknown, already used or expired (all reported identically)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     BadRequest:
       description: Malformed JSON, wrong field type, or unknown field
       content:
@@ -346,7 +648,7 @@ components:
           properties:
             code:
               type: string
-              enum: [bad_request, unauthorized, forbidden, not_found, conflict, payload_too_large, validation_failed, rate_limited, internal]
+              enum: [bad_request, invalid_token, unauthorized, forbidden, not_found, conflict, payload_too_large, validation_failed, rate_limited, bad_gateway, internal]
             message: { type: string }
             fields:
               type: object
@@ -360,7 +662,7 @@ components:
       properties:
         email: { type: string, format: email, maxLength: 254 }
         name: { type: string, minLength: 1, maxLength: 100 }
-        password: { type: string, minLength: 8, maxLength: 72, writeOnly: true, description: "Length is in BYTES (bcrypt limit)" }
+        password: { type: string, minLength: 8, maxLength: 128, writeOnly: true, description: "Length is in BYTES. Hashed with Argon2id; the 128 cap only bounds CPU (there is no 72-byte limit as with bcrypt)" }
     LoginRequest:
       type: object
       required: [email, password]
@@ -376,12 +678,44 @@ components:
         expires_at: { type: string, format: date-time }
     User:
       type: object
-      required: [id, email, name, created_at]
+      required: [id, email, name, email_verified, image, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         name: { type: string }
+        email_verified: { type: boolean }
+        image: { type: [string, "null"], description: Avatar URL (set for GitHub sign-ups) }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Session:
+      type: object
+      required: [id, expires_at, ip_address, user_agent, created_at, updated_at]
+      description: A server-side login session. The token itself is never in a response body; it lives only in the HttpOnly cookie.
+      properties:
+        id: { type: string, format: uuid, description: "Public handle for list/revoke, NOT the secret" }
+        expires_at: { type: string, format: date-time }
+        ip_address: { type: string }
+        user_agent: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, description: Sliding expiry bumps this together with expires_at }
+    SessionListItem:
+      allOf:
+        - $ref: "#/components/schemas/Session"
+        - type: object
+          required: [current]
+          properties:
+            current: { type: boolean, description: True for the session that made this request }
+    SessionResponse:
+      type: object
+      required: [user, session]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        session: { $ref: "#/components/schemas/Session" }
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status: { type: boolean }
 
     ProjectInput:
       type: object
