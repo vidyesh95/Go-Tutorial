@@ -1,0 +1,47 @@
+// users.proto is the CONTRACT between users-svc (server) and its callers (orders-svc).
+//
+// Rules for evolving a .proto without breaking running clients:
+//   - never reuse or renumber a field; add new fields with new numbers (old clients ignore them);
+//   - never change a field's type; `reserved` the number of anything you delete;
+//   - the package carries a version (users.v1). A truly breaking change becomes users.v2,
+//     served side by side until every caller has migrated.
+syntax = "proto3";
+
+package users.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/vidyesh95/Go-Tutorial/07-microservices/gen/users/v1;usersv1";
+
+// UsersService owns the user data. No other service reads its database; they ask via this API.
+service UsersService {
+  // GetUser returns one user. NOT_FOUND if the id is unknown, INVALID_ARGUMENT if it is empty.
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+
+  // CreateUser registers a user. ALREADY_EXISTS if the email is taken.
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}

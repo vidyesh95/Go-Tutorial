@@ -1,0 +1,82 @@
+# Three services, one command (from the repository root):
+#
+#   docker compose -f 07-microservices/docker-compose.yml up --build
+#   curl localhost:8080/healthz
+#   curl -X POST localhost:8080/api/orders -H 'Idempotency-Key: k1' \
+#        -d '{"user_id":"<id from grpcurl CreateUser>","item":"book","quantity":1}'
+#   docker compose -f 07-microservices/docker-compose.yml down       # add -v to delete the data volumes
+#
+# Compose puts all services on one private network where each is reachable by its service name
+# (users-svc:9090, orders-svc:8081), which is how ORDERS_URL / USERS_ADDR are written below.
+# In Kubernetes the same role is played by Service objects and cluster DNS.
+name: microservices-demo
+
+services:
+  users-svc:
+    build:
+      context: ..                          # repo root: go.mod lives there
+      dockerfile: 07-microservices/Dockerfile
+      args: { SERVICE: users-svc }
+    environment:
+      ADDR: ":9090"
+      DB_PATH: /data/users.db
+    ports:
+      - "9090:9090"                        # published only so you can try grpcurl from the host
+    volumes:
+      - users-data:/data                   # users-svc's PRIVATE database volume
+    healthcheck:
+      # The runtime image has no shell/curl, so the binary probes itself (gRPC health service).
+      test: ["CMD", "/app", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    restart: unless-stopped
+
+  orders-svc:
+    build:
+      context: ..
+      dockerfile: 07-microservices/Dockerfile
+      args: { SERVICE: orders-svc }
+    environment:
+      ADDR: ":8081"
+      DB_PATH: /data/orders.db
+      USERS_ADDR: users-svc:9090           # service name = DNS name on the compose network
+    volumes:
+      - orders-data:/data                  # orders-svc's PRIVATE database volume (never shared with users-svc)
+    depends_on:
+      users-svc:
+        condition: service_healthy         # start order only matters for a smooth demo; the gRPC
+                                           # client reconnects by itself if users-svc restarts later
+    healthcheck:
+      test: ["CMD", "/app", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: 07-microservices/Dockerfile
+      args: { SERVICE: gateway }
+    environment:
+      ADDR: ":8080"
+      ORDERS_URL: http://orders-svc:8081
+    ports:
+      - "8080:8080"                        # the ONLY entry point clients should use
+    depends_on:
+      orders-svc:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app", "-healthcheck"]  # probes /livez: restarting the gateway cannot fix a downstream outage
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    restart: unless-stopped
+
+volumes:
+  users-data:
+  orders-data:

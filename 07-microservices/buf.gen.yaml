@@ -1,0 +1,13 @@
+# Code generation config. Run from 07-microservices:
+#   go tool buf lint && go tool buf generate
+# The plugins are `local`: buf runs the protoc-gen-go / protoc-gen-go-grpc binaries that the Go
+# toolchain builds from the versions pinned in go.mod, so every developer and CI generates
+# byte-identical code with no separate install step.
+version: v2
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: gen
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-grpc"]
+    out: gen
+    opt: paths=source_relative

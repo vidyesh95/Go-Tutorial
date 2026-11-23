@@ -1,0 +1,12 @@
+# buf is the modern protobuf toolchain: it lints, detects breaking changes and runs code
+# generation without hand-written protoc command lines. Here it is installed as a Go tool
+# (see the `tool` block in go.mod), so `go tool buf ...` needs nothing but Go.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

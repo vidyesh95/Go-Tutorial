@@ -1,0 +1,17 @@
+# Used automatically by BuildKit for 07-microservices/Dockerfile (the build context is the repo root).
+.git
+.github
+.claude
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.env
+**/.env
+bin
+tmp
+coverage.*
+01-fundamentals
+02-concurrency
+03-sql-sqlite
+04-web-stdlib
+docs
