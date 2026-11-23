@@ -1,0 +1,13 @@
+# sqlc reads schema + annotated queries and generates type-safe Go. Regenerate with:
+#   make sqlc            (or)   go tool sqlc generate -f 03-sql-sqlite/09sqlc/sqlc.yaml
+# Paths are relative to this file.
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "../sql/schema.sql" # the canonical schema shared by the whole track
+    queries: "query.sql"
+    gen:
+      go:
+        package: "db"
+        out: "db"
+        emit_json_tags: true # handy when the generated structs are returned from an HTTP API
