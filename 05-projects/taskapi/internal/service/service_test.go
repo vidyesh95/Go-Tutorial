@@ -1,0 +1,272 @@
+package service
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/vidyesh95/Go-Tutorial/05-projects/taskapi/internal/domain"
+)
+
+func newAuthSvc(t *testing.T, store *fakeStore) (*AuthService, *fakeHasher) {
+	t.Helper()
+	h := &fakeHasher{}
+	svc, err := NewAuthService(store, h, fakeTokens{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.now, svc.newID = fixedClock, seqIDs()
+	return svc, h
+}
+
+func TestSignup(t *testing.T) {
+	t.Parallel()
+	good := domain.SignupInput{Email: "  Ada@Example.com ", Name: " Ada ", Password: "correct horse"}
+
+	tests := []struct {
+		name    string
+		in      domain.SignupInput
+		prep    func(*fakeStore)
+		wantErr error // nil = success; domain.ErrConflict, or a *ValidationError via wantVal
+		wantVal bool
+	}{
+		{name: "ok, normalized", in: good},
+		{name: "validation error", in: domain.SignupInput{Email: "bad"}, wantVal: true},
+		{
+			name: "duplicate email (case-insensitive)", in: good, wantErr: domain.ErrConflict,
+			prep: func(s *fakeStore) { s.users["x"] = domain.User{ID: "x", Email: "ada@example.com"} },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeStore()
+			if tt.prep != nil {
+				tt.prep(store)
+			}
+			svc, _ := newAuthSvc(t, store)
+			u, err := svc.Signup(t.Context(), tt.in)
+			switch {
+			case tt.wantVal:
+				if _, ok := errors.AsType[*domain.ValidationError](err); !ok {
+					t.Fatalf("got %v, want *ValidationError", err)
+				}
+			case tt.wantErr != nil:
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("got %v, want %v", err, tt.wantErr)
+				}
+			default:
+				if err != nil {
+					t.Fatal(err)
+				}
+				if u.Email != "ada@example.com" || u.Name != "Ada" || u.ID != "id-001" || u.PasswordHash != "hashed:correct horse" {
+					t.Fatalf("unexpected user %+v", u)
+				}
+				if !u.CreatedAt.Equal(fixedNow) {
+					t.Fatalf("CreatedAt = %v", u.CreatedAt)
+				}
+			}
+		})
+	}
+}
+
+func TestLogin(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	svc, hasher := newAuthSvc(t, store)
+	if _, err := svc.Signup(t.Context(), domain.SignupInput{Email: "ada@example.com", Name: "Ada", Password: "correct horse"}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := svc.Login(t.Context(), " ADA@example.com", "correct horse")
+	if err != nil || res.Token != "token-for-id-001" {
+		t.Fatalf("login = %+v, %v", res, err)
+	}
+
+	before := hasher.compares
+	for _, tc := range []struct{ name, email, pw string }{
+		{"wrong password", "ada@example.com", "nope"},
+		{"unknown email", "ghost@example.com", "correct horse"},
+		{"oversized password", "ada@example.com", string(make([]byte, 5000))},
+	} {
+		_, err := svc.Login(t.Context(), tc.email, tc.pw)
+		if !errors.Is(err, domain.ErrUnauthorized) {
+			t.Errorf("%s: got %v, want ErrUnauthorized", tc.name, err)
+		}
+	}
+	// wrong password and unknown email must both have run a bcrypt-style compare (timing
+	// equalization); the oversized password is rejected before any hashing work.
+	if got := hasher.compares - before; got != 2 {
+		t.Errorf("compare calls = %d, want 2", got)
+	}
+}
+
+func TestProjectsLifecycleAndIsolation(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newFakeStore()
+	svc := NewProjectService(store)
+	svc.now, svc.newID = fixedClock, seqIDs()
+
+	p, err := svc.Create(ctx, "alice", "  Roadmap ")
+	if err != nil || p.Name != "Roadmap" || p.OwnerID != "alice" {
+		t.Fatalf("create = %+v, %v", p, err)
+	}
+	if _, err := svc.Create(ctx, "alice", "Roadmap"); !errors.Is(err, domain.ErrConflict) {
+		t.Errorf("duplicate: %v", err)
+	}
+	if _, err := svc.Create(ctx, "bob", "Roadmap"); err != nil {
+		t.Errorf("same name, other owner: %v", err)
+	}
+	if _, err := svc.Create(ctx, "alice", "  "); err == nil {
+		t.Error("blank name accepted")
+	}
+
+	// Bob cannot see, rename or delete Alice's project; all look like "not found".
+	if _, err := svc.Get(ctx, "bob", p.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("get: %v", err)
+	}
+	if _, err := svc.Rename(ctx, "bob", p.ID, "Mine"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("rename: %v", err)
+	}
+	if err := svc.Delete(ctx, "bob", p.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("delete: %v", err)
+	}
+
+	renamed, err := svc.Rename(ctx, "alice", p.ID, "Plan")
+	if err != nil || renamed.Name != "Plan" {
+		t.Fatalf("rename = %+v, %v", renamed, err)
+	}
+	if err := svc.Delete(ctx, "alice", p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Get(ctx, "alice", p.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("get after delete: %v", err)
+	}
+}
+
+func TestProjectPagination(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	svc := NewProjectService(newFakeStore())
+	svc.newID = seqIDs()
+	for i := range 5 {
+		if _, err := svc.Create(ctx, "alice", fmt.Sprintf("p%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page1, err := svc.List(ctx, "alice", "", 2)
+	if err != nil || len(page1.Items) != 2 || !page1.HasMore {
+		t.Fatalf("page1 = %+v, %v", page1, err)
+	}
+	page2, _ := svc.List(ctx, "alice", page1.Items[1].ID, 2)
+	page3, _ := svc.List(ctx, "alice", page2.Items[1].ID, 2)
+	if len(page2.Items) != 2 || !page2.HasMore || len(page3.Items) != 1 || page3.HasMore {
+		t.Fatalf("page2 = %+v page3 = %+v", page2, page3)
+	}
+	// Exactly-full last page must NOT claim there is more.
+	exact, _ := svc.List(ctx, "alice", "", 5)
+	if len(exact.Items) != 5 || exact.HasMore {
+		t.Fatalf("exact = %+v", exact)
+	}
+	if other, _ := svc.List(ctx, "bob", "", 10); len(other.Items) != 0 {
+		t.Fatalf("bob sees %d of alice's projects", len(other.Items))
+	}
+}
+
+func newTaskSvc(store *fakeStore) *TaskService {
+	svc := NewTaskService(store, store)
+	svc.now, svc.newID = fixedClock, seqIDs()
+	return svc
+}
+
+func TestTaskCreateRules(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newFakeStore()
+	projects := NewProjectService(store)
+	p, _ := projects.Create(ctx, "alice", "P")
+	svc := newTaskSvc(store)
+
+	task, err := svc.Create(ctx, "alice", p.ID, domain.CreateTaskInput{Title: " Write tests "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Title != "Write tests" || task.Status != domain.StatusTodo || task.Priority != domain.DefaultPriority {
+		t.Fatalf("defaults not applied: %+v", task)
+	}
+
+	if _, err := svc.Create(ctx, "bob", p.ID, domain.CreateTaskInput{Title: "sneaky"}); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("bob creating in alice's project: %v", err)
+	}
+	if _, err := svc.Create(ctx, "alice", "missing", domain.CreateTaskInput{Title: "x"}); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("missing project: %v", err)
+	}
+	if _, err := svc.Create(ctx, "alice", p.ID, domain.CreateTaskInput{}); err == nil {
+		t.Error("empty title accepted")
+	}
+}
+
+func TestTaskListFilterAndOwnership(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newFakeStore()
+	p, _ := NewProjectService(store).Create(ctx, "alice", "P")
+	svc := newTaskSvc(store)
+	for i := range 4 {
+		task, _ := svc.Create(ctx, "alice", p.ID, domain.CreateTaskInput{Title: fmt.Sprint("t", i)})
+		if i%2 == 0 {
+			st := domain.StatusDone
+			if _, err := svc.Update(ctx, "alice", task.ID, domain.UpdateTaskInput{Status: &st}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	done := domain.StatusDone
+	page, err := svc.List(ctx, "alice", p.ID, ListTasksParams{Status: &done})
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("done tasks = %d, %v", len(page.Items), err)
+	}
+	bogus := domain.TaskStatus("bogus")
+	if _, err := svc.List(ctx, "alice", p.ID, ListTasksParams{Status: &bogus}); err == nil {
+		t.Error("bogus status accepted")
+	}
+	if _, err := svc.List(ctx, "bob", p.ID, ListTasksParams{}); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("bob listing alice's tasks: %v", err)
+	}
+}
+
+func TestTaskUpdateGetDelete(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newFakeStore()
+	p, _ := NewProjectService(store).Create(ctx, "alice", "P")
+	svc := newTaskSvc(store)
+	task, _ := svc.Create(ctx, "alice", p.ID, domain.CreateTaskInput{Title: "orig"})
+
+	title, due := " renamed ", "2026-09-01"
+	got, err := svc.Update(ctx, "alice", task.ID, domain.UpdateTaskInput{Title: &title, DueDate: &due})
+	if err != nil || got.Title != "renamed" || got.DueDate == nil || *got.DueDate != due || got.Priority != domain.DefaultPriority {
+		t.Fatalf("update = %+v, %v", got, err)
+	}
+	if _, err := svc.Update(ctx, "alice", task.ID, domain.UpdateTaskInput{}); err == nil {
+		t.Error("empty patch accepted")
+	}
+	if _, err := svc.Update(ctx, "bob", task.ID, domain.UpdateTaskInput{Title: &title}); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("bob update: %v", err)
+	}
+	if _, err := svc.Get(ctx, "bob", task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("bob get: %v", err)
+	}
+	if err := svc.Delete(ctx, "bob", task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("bob delete: %v", err)
+	}
+	if err := svc.Delete(ctx, "alice", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Get(ctx, "alice", task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("get after delete: %v", err)
+	}
+}

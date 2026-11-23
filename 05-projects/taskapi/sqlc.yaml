@@ -1,0 +1,19 @@
+# sqlc reads the SQL schema and annotated queries and generates type-safe Go. Regenerate with:
+#   make sqlc            (or)   go tool sqlc generate -f 05-projects/taskapi/sqlc.yaml
+# Paths are relative to this file.
+version: "2"
+sql:
+  - engine: "sqlite"
+    # The goose migrations ARE the schema: sqlc understands the "-- +goose Up/Down" markers and
+    # reads only the Up section, so the generated code can never drift from what production runs.
+    schema: "internal/store/migrations"
+    queries: "internal/store/queries"
+    gen:
+      go:
+        package: "sqlcdb"
+        out: "internal/store/sqlcdb"
+        # Nullable columns become *string instead of sql.NullString: friendlier to map into
+        # domain types, where "no due date" is simply a nil pointer.
+        emit_pointers_for_null_types: true
+        # Return [] instead of nil for empty :many results (matters for JSON encoding).
+        emit_empty_slices: true
