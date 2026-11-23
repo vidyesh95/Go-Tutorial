@@ -1,114 +1,92 @@
+// Lesson 05: Basic data types
+//
+// Go is statically typed. The basic (built-in) types are:
+//
+//	bool
+//	string
+//	int  int8  int16  int32  int64      signed integers
+//	uint uint8 uint16 uint32 uint64     unsigned integers (plus uintptr)
+//	float32 float64                     floating point
+//	complex64 complex128                complex numbers (rare)
+//	byte = alias for uint8              one byte of data
+//	rune = alias for int32              one Unicode code point
+//
+// Composite types (arrays, slices, maps, structs, pointers, functions,
+// interfaces, channels) are covered in later lessons.
+//
+// Key rules:
+//   - Use `int` for counts, lengths and indexes, and `float64` for decimals.
+//     Use sized types only when you need a specific width (binary formats,
+//     large arrays where memory matters, hashing).
+//   - `int` is 32 or 64 bits depending on the platform (64 on modern machines).
+//   - There are NO implicit conversions. int + float64 does not compile; write
+//     float64(i) explicitly.
+//   - Integer overflow wraps around silently at run time (255 + 1 in a uint8 is 0).
+//   - Converting a float to an int truncates toward zero.
+//   - A string is an immutable sequence of BYTES (usually UTF-8). Lesson 14 covers
+//     strings, bytes and runes in detail.
+//
+// Gotcha: never use float64 for money. 0.1 + 0.2 != 0.3 in binary floating
+// point. Store money as integer minor units (cents) in an int64.
+//
+// In industry: IDs and counters are int64 or uint64, timestamps use time.Time
+// (lesson 25), and money is int64 cents or a decimal library. Choosing int32
+// to "save memory" is rarely worth the conversion noise.
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
-// Go has 4 types of data types namely string, boolean, numeric(int[8,16,32,64] and float[32 and 64]) and derived( array, pointer, struct, function, interface, slice, channel, map)
 func main() {
-	var username string = "vidyesh"
-	fmt.Println(username)
-	fmt.Printf("Variable is of type: %T \n", username)
+	fmt.Println("Basic data types in Go")
 
-	var isLoggedIn bool = false
-	fmt.Println(isLoggedIn)
-	fmt.Printf("Variable is of type: %T \n", isLoggedIn)
+	// %T prints the type, %v prints the value in a default format.
+	var username string = "ada"
+	var isLoggedIn bool
+	var count int = 255
+	var small int8 = -128 // int8 holds -128..127
+	var u8 uint8 = 255    // uint8 holds 0..255, same as byte
+	var f32 float32 = 255.45544
+	var f64 float64 = 255.12345678912345
+	var r rune = 'G' // a rune literal uses single quotes
+	var b byte = 'G' // same number, different type
+	var big uint64 = math.MaxUint64
+	fmt.Printf("string  : %v (%T)\n", username, username)
+	fmt.Printf("bool    : %v (%T) <- zero value\n", isLoggedIn, isLoggedIn)
+	fmt.Printf("int     : %v (%T)\n", count, count)
+	fmt.Printf("int8    : %v (%T)\n", small, small)
+	fmt.Printf("uint8   : %v (%T)\n", u8, u8)
+	fmt.Printf("float32 : %v (%T) <- about 7 digits of precision\n", f32, f32)
+	fmt.Printf("float64 : %v (%T) <- about 15-16 digits of precision\n", f64, f64)
+	fmt.Printf("rune    : %v (%T) as char: %c\n", r, r, r)
+	fmt.Printf("byte    : %v (%T) as char: %c\n", b, b, b)
+	fmt.Printf("uint64  : %v (%T)\n", big, big)
 
-	/*
-	* The int, uint, and uintptr types are usually 32 bits wide on 32-bit systems and 64 bits wide on 64-bit systems.
-	* When you need an integer value you should use int unless you have a specific reason to use a sized or unsigned integer type.
-	 */
-	var unsignedVal uint = 255
-	fmt.Println(unsignedVal)
-	fmt.Printf("Variable is of type: %T \n", unsignedVal)
+	// Limits are available as constants in the math package.
+	fmt.Println("MaxInt32:", math.MaxInt32, "MinInt64:", math.MinInt64)
 
-	var byteValue uint8 = 255
-	fmt.Println(byteValue)
-	fmt.Printf("Variable is of type: %T \n", byteValue)
-
-	var uint16Val uint16 = 255
-	fmt.Println(uint16Val)
-	fmt.Printf("Variable is of type: %T \n", uint16Val)
-
-	var uint32Val uint32 = 255
-	fmt.Println(uint32Val)
-	fmt.Printf("Variable is of type: %T \n", uint32Val)
-
-	var uint64Val uint64 = 255
-	fmt.Println(uint64Val)
-	fmt.Printf("Variable is of type: %T \n", uint64Val)
-
-	/*
-	* uintptr is generally used to perform indirect arithmetic operations on unsafe pointers for unsafe memory access.
-	* First, unsafe.Pointer is converted to uintptr, and then the arithmetic operation is performed on uintptr.
-	* Finally, it is converted back to unsafe.Pointer, which now points to the new memory address as a result of the operation.
-	* uintptr is also used to store and print the pointer address value.
-	* Since the variable with the type uintptr does not reference anything as it’s a plain integer, the pointer corresponding to that object can be garbage collected.
-	 */
-	var uintPtrVal uintptr = 0xc82000c290
-	fmt.Println(uintPtrVal)
-	fmt.Printf("Variable is of type: %T \n", uintPtrVal)
-
-	var signedVal int = 255
-	fmt.Println(signedVal)
-	fmt.Printf("Variable is of type: %T \n", signedVal)
-
-	var intVal int8 = -128
-	fmt.Println(intVal)
-	fmt.Printf("Variable is of type: %T \n", intVal)
-
-	var int16Val int16 = -32768
-	fmt.Println(int16Val)
-	fmt.Printf("Variable is of type: %T \n", int16Val)
-
-	var int32Val int32 = -2147483648
-	fmt.Println(int32Val)
-	fmt.Printf("Variable is of type: %T \n", int32Val)
-
-	var int64Val int64 = -9223372036854775808
-	fmt.Println(int64Val)
-	fmt.Printf("Variable is of type: %T \n", int64Val)
-
-	var float32Val float32 = 255.45544
-	fmt.Println(float32Val)
-	fmt.Printf("Variable is of type: %T \n", float32Val)
-
-	var float64Val float64 = 255.12345678912345
-	fmt.Println(float64Val)
-	fmt.Printf("Variable is of type: %T \n", float64Val)
-
-	/*
-	* Default values: Variables declared without an explicit initial value are given their zero value.
-	* The zero value is:
-	* 0 for numeric types,
-	* false for the boolean type, and
-	* "" (the empty string) for strings.
-	 */
-	var anotherVariable int
-	fmt.Println(anotherVariable)
-	fmt.Printf("Variable is of type: %T \n", anotherVariable)
-
-	// byte is an alias for uint8
-	var byteVal byte = 255
-	fmt.Println(byteVal)
-	fmt.Printf("Variable is of type: %T \n", byteVal)
-
-	// rune is an alias for int32 and represents a Unicode code point
-	var runeVal rune = -214748364
-	fmt.Println(runeVal)
-	fmt.Printf("Variable is of type: %T \n", runeVal)
-
-	// Implicit type
-	var website = "qatoto.com"
-	fmt.Println(website)
-	fmt.Printf("Variable is of type: %T \n", website)
-
-	// Type inference
+	// Type inference: the compiler picks int, float64, string, bool.
 	numberOfUsers := 300000
-	fmt.Println(numberOfUsers)
-	fmt.Printf("Variable is of type: %T \n", numberOfUsers)
+	ratio := 0.75
+	fmt.Printf("inferred: %T %T\n", numberOfUsers, ratio)
 
-	// Type conversion
-	var a int = 10
-	var b float64 = 10.5
-	fmt.Println(float64(a) + b)
-	fmt.Println(a + int(b))
+	// Overflow wraps around silently (no panic, no error).
+	var wrap uint8 = 255
+	wrap++
+	fmt.Println("uint8 255 + 1 =", wrap)
+
+	// Explicit conversion is required between numeric types.
+	a := 10
+	b2 := 10.5
+	fmt.Println("float64(a) + b2 =", float64(a)+b2)
+	fmt.Println("a + int(b2)     =", a+int(b2), "(10.5 truncated to 10)")
+
+	// Why float64 is wrong for money.
+	// (Constant expressions are exact, so we use variables to see the real behaviour.)
+	tenth, fifth := 0.1, 0.2
+	fmt.Println("0.1 + 0.2 =", tenth+fifth, "-> use cents (int64) for money")
+	cents := int64(1999)
+	fmt.Printf("price: $%d.%02d\n", cents/100, cents%100)
 }

@@ -1,64 +1,76 @@
+// Lesson 10: Arrays
+//
+// An array is a FIXED-length sequence of elements of one type.
+// The length is part of the type: [3]int and [4]int are different types.
+//
+//	var a [5]int              // five zeros
+//	b := [3]string{"x", "y", "z"}
+//	c := [...]int{1, 2, 3}    // compiler counts: [3]int
+//
+// Key rules:
+//   - Arrays are VALUES. Assigning or passing an array copies every element.
+//   - Arrays of the same type can be compared with == (all elements are compared).
+//   - Indexing out of range panics at run time (or fails to compile if the
+//     index is a constant).
+//   - len(a) is a compile-time constant for arrays.
+//   - Slicing an array (a[1:3]) gives a SLICE that shares the array's memory.
+//
+// Gotcha: because arrays are copied on assignment, writing to the copy does
+// not change the original. That surprises people coming from other languages.
+//
+// In industry: you rarely use arrays directly; slices (lesson 11) are the
+// workhorse. Arrays appear when the size is genuinely fixed and part of the
+// meaning: [16]byte for a UUID, [32]byte for a SHA-256 hash, [3]float64 for a
+// vector. Because they are comparable, they can also be map keys.
 package main
 
 import "fmt"
 
-// Arrays in Go
 func main() {
+	fmt.Println("Arrays in Go")
 
-	// Print the array of Even numbers
-	fmt.Println("Print the array of Even numbers")
-	var EvenNum [5]int
-	EvenNum[0] = 0
-	EvenNum[1] = 2
-	EvenNum[2] = 4
-	EvenNum[3] = 6
-	EvenNum[4] = 8
-	fmt.Println(EvenNum)
+	// Zero-valued array, then assign by index.
+	var even [5]int
+	for i := range len(even) {
+		even[i] = i * 2
+	}
+	fmt.Println("even:", even)
 
-	// Print the array of Odd numbers
-	OddNum := [5]int{1, 3, 5, 7, 9}
-	fmt.Println("Print the array of Odd numbers", OddNum)
+	// Array literal.
+	odd := [5]int{1, 3, 5, 7, 9}
+	fmt.Println("odd:", odd, "len:", len(odd))
 
-	var ages [3]int = [3]int{20, 25, 30}
-	var names [4]string = [4]string{"Yash", "Raj", "Rohit", "Sachin"}
+	// [...] lets the compiler count the elements.
+	names := [...]string{"Yash", "Raj", "Rohit", "Sachin"}
+	fmt.Printf("names: %v len=%d type=%T\n", names, len(names), names)
 
-	// Print the arrays
-	fmt.Println("Print the arrays")
-	fmt.Println("Print the array of ages:", ages, "of length", len(ages))
-	fmt.Println(names, len(names))
+	// Indexed literal: unlisted elements are zero.
+	sparse := [5]int{1: 10, 3: 30}
+	fmt.Println("sparse:", sparse)
 
-	// Print the first element
-	fmt.Println("Print the first element")
-	fmt.Println(ages[0])
-	fmt.Println(names[0])
+	fmt.Println("first:", names[0], "| last:", names[len(names)-1])
 
-	// Print the last element
-	fmt.Println("Print the last element")
-	fmt.Println(ages[len(ages)-1])
-	fmt.Println(names[len(names)-1])
+	// Arrays are values: b is an independent copy.
+	a := [3]int{1, 2, 3}
+	b := a
+	b[0] = 99
+	fmt.Println("a:", a, "b:", b, "(a unchanged)")
 
-	// Print the range
-	fmt.Println("Print the range")
-	fmt.Println(ages[1:3])
-	fmt.Println(names[1:3])
+	// == compares every element.
+	fmt.Println("a == [3]int{1,2,3}:", a == [3]int{1, 2, 3})
 
-	// Print the range till the end
-	fmt.Println("Print the range till the end")
-	fmt.Println(ages[1:])
-	fmt.Println(names[1:])
+	// Slicing an array produces a slice that SHARES the array's memory.
+	s := names[1:3] // elements at index 1 and 2
+	fmt.Println("names[1:3]:", s, "len:", len(s), "cap:", cap(s))
+	s[0] = "CHANGED"
+	fmt.Println("original array sees the change:", names)
 
-	// Print the range from the beginning
-	fmt.Println("Print the range from the beginning")
-	fmt.Println(ages[:3])
-	fmt.Println(names[:3])
+	// Common slice expressions.
+	fmt.Println("names[1:]:", names[1:])
+	fmt.Println("names[:2]:", names[:2])
+	fmt.Println("names[:]:", names[:]) // a slice covering the whole array
 
-	// Print the range from the beginning till the end
-	fmt.Println("Print the range from the beginning till the end")
-	fmt.Println(ages[:])
-	fmt.Println(names[:])
-
-	// Print the range from the beginning till the end
-	fmt.Println("Print the range from the beginning till the end")
-	fmt.Println(ages)
-	fmt.Println(names)
+	// Fixed-size arrays are handy for things like hashes or IDs.
+	var id [4]byte = [4]byte{0xde, 0xad, 0xbe, 0xef}
+	fmt.Printf("id as hex: %x\n", id)
 }

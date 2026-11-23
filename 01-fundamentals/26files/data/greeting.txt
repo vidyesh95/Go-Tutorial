@@ -1,0 +1,2 @@
+Hello from an embedded file!
+This text is compiled into the binary.
