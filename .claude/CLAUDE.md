@@ -12,3 +12,8 @@ Act as an orchestrator. Keep the main context clean and protect subscription quo
   - Dispatch `architect` (Opus xhigh) only for hard system design, concurrency/security audits, or after `builder` fails twice.
   - Handle tiny 1-2 line edits directly instead of paying subagent spawn overhead.
 - **Token discipline:** Instruct subagents to return only changed file paths, test results, and short summaries—never raw full files.
+
+## Rex Workspace Rules
+- Never start a second dev server or test watcher if blocks labeled `dev` or `tests` exist.
+- Inspect live output via `scout` (Haiku) using `rex capture -b dev --trim | tail -n 80` or `rex capture -b tests --trim | tail -n 80` so raw logs stay out of main Opus context.
+- For one-off builds/typechecks, run `rex split --wait --keep-open --focus=false -- <cmd>` so you get the real exit code.
